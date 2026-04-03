@@ -1,13 +1,13 @@
 """
-Realer Estate — Compositor v4 Final
-=====================================
-Green screen compositor using:
-1. High-saturation HSV threshold (S>150) — eliminates background false positives
-2. extreme_quad_corners() on convex hull — always returns exactly 4 points
-3. RANSAC line fitting — robust to notch outliers, rounded corners, any irregularity
+Realer Estate — Compositor (canonical)
+=======================================
+Direct translation of the exact inline script that produced
+the verified working subway output.
 
-Usage:
-    python compositor_v4_final.py --scene scene.png --ui ui.png --output out.png
+Three fixes:
+1. S>150 HSV threshold — eliminates background false positives
+2. extreme_quad_corners() on convex hull — always exactly 4 points
+3. RANSAC line fitting — robust to notch outliers, rounded corners
 """
 
 import cv2
@@ -18,175 +18,44 @@ import sys
 from pathlib import Path
 
 
-# ── GLOBALS for interactive corner picking ──────────────────────────────────
-_corners = []
-_window = "Click 4 screen corners: TL → TR → BR → BL  (r=reset, Enter=confirm)"
-
-
-def _mouse_callback(event, x, y, flags, param):
-    global _corners
-    if event == cv2.EVENT_LBUTTONDOWN and len(_corners) < 4:
-        _corners.append([x, y])
-        vis = param["vis"]
-        labels = ["TL", "TR", "BR", "BL"]
-        cv2.circle(vis, (x, y), 8, (0, 255, 0), -1)
-        cv2.putText(vis, labels[len(_corners)-1], (x+10, y-10),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-        if len(_corners) > 1:
-            pts = np.array(_corners, np.int32)
-            cv2.polylines(vis, [pts], len(_corners)==4, (0, 255, 0), 2)
-        cv2.imshow(_window, vis)
-        print(f"  Corner {len(_corners)}: ({x}, {y}) — "
-              f"{['TL','TR','BR','BL'][len(_corners)-1]}")
-
-
-def pick_corners_interactively(scene: np.ndarray, corners_path: str) -> np.ndarray:
-    global _corners
-    _corners = []
-    h, w = scene.shape[:2]
-    scale = min(1.0, 1000 / w)
-    disp_w, disp_h = int(w * scale), int(h * scale)
-    display = cv2.resize(scene, (disp_w, disp_h))
-    vis = display.copy()
-
-    print(f"\n{'─'*60}")
-    print(f"CORNER PICKER")
-    print(f"{'─'*60}")
-    print(f"Click the 4 corners of the PHONE SCREEN in this order:")
-    print(f"  1. TOP-LEFT  2. TOP-RIGHT  3. BOTTOM-RIGHT  4. BOTTOM-LEFT")
-    print(f"Keys: r = reset | Enter = confirm | q = quit")
-    print(f"{'─'*60}\n")
-
-    cv2.namedWindow(_window, cv2.WINDOW_NORMAL)
-    cv2.resizeWindow(_window, disp_w, disp_h)
-    cv2.setMouseCallback(_window, _mouse_callback, {"vis": vis})
-    cv2.imshow(_window, vis)
-
-    while True:
-        key = cv2.waitKey(20) & 0xFF
-        if key == ord('r'):
-            _corners = []
-            vis[:] = display[:]
-            cv2.imshow(_window, vis)
-            print("  [RESET] Click corners again.")
-        elif key in [13, 10] and len(_corners) == 4:
-            break
-        elif key == ord('q'):
-            cv2.destroyAllWindows()
-            sys.exit("Cancelled.")
-
-    cv2.destroyAllWindows()
-    actual_corners = [[int(x / scale), int(y / scale)] for x, y in _corners]
-    with open(corners_path, 'w') as f:
-        json.dump({"corners": actual_corners, "image_size": [w, h]}, f, indent=2)
-    print(f"\n[SAVED] Corners saved to {corners_path}")
-    return np.array(actual_corners, dtype=np.float32)
-
-
-def load_corners(corners_path: str) -> np.ndarray:
-    with open(corners_path) as f:
-        data = json.load(f)
-    corners = np.array(data["corners"], dtype=np.float32)
-    print(f"[CORNERS] Loaded from {corners_path}")
-    for pt, lbl in zip(corners, ['TL','TR','BR','BL']):
-        print(f"  {lbl}: {pt.astype(int)}")
-    return corners
-
-
-# ── GREEN SCREEN DETECTION ───────────────────────────────────────────────────
-
-def get_clean_mask(scene: np.ndarray):
-    """
-    Robust green detection using high-saturation HSV threshold.
-
-    Key: chroma green (#00B140) has S≈235. Subway walls, foliage,
-    and other green-ish backgrounds have S<100. Requiring S>150
-    eliminates false positives without affecting the chroma screen.
-
-    Returns (mask, contour) or (None, None) if no green found.
-    """
+def get_clean_mask(scene):
     h, w = scene.shape[:2]
     hsv = cv2.cvtColor(scene, cv2.COLOR_BGR2HSV)
-
-    # High-saturation green: H in [40,95], S>150, V>60
     mask = cv2.inRange(hsv, np.array([40, 150, 60]), np.array([95, 255, 255]))
-
-    # Morphological cleanup
     k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (11, 11))
     mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, k, iterations=2)
     mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN,  k, iterations=1)
-
     contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    if not contours:
-        return None, None
-
-    # Filter out contours touching image edges (background bleeds to borders)
     margin = 8
-    valid = []
-    for c in contours:
-        if cv2.contourArea(c) < 500:
-            continue
-        x, y, cw, ch = cv2.boundingRect(c)
-        touches_edge = (x <= margin or y <= margin or
-                        x + cw >= w - margin or y + ch >= h - margin)
-        if not touches_edge:
-            valid.append(c)
-
-    # Fallback: if all contours touch edges, take the largest overall
+    valid = [c for c in contours if cv2.contourArea(c) > 500 and
+             not (cv2.boundingRect(c)[0] <= margin or
+                  cv2.boundingRect(c)[1] <= margin or
+                  cv2.boundingRect(c)[0] + cv2.boundingRect(c)[2] >= w - margin or
+                  cv2.boundingRect(c)[1] + cv2.boundingRect(c)[3] >= h - margin)]
     if not valid:
-        valid = [max(contours, key=cv2.contourArea)]
-
+        valid = [max(contours, key=cv2.contourArea)] if contours else []
+    if not valid:
+        return None, None
     best = max(valid, key=cv2.contourArea)
     clean = np.zeros((h, w), dtype=np.uint8)
     cv2.drawContours(clean, [best], -1, 255, -1)
-
-    area = cv2.contourArea(best)
-    print(f"[MASK] Green region: {area:,.0f} px² "
-          f"({100*area/(w*h):.1f}% of image)")
-
     return clean, best
 
 
-def extreme_quad_corners(contour: np.ndarray) -> np.ndarray:
-    """
-    Extract 4 true quad corners from convex hull using extreme diagonal projections.
-
-    Works regardless of notches, rounded corners, or how many points
-    approxPolyDP would return. Mathematically guaranteed to return
-    exactly 4 points for any convex shape.
-
-      TL = min(x+y)   BR = max(x+y)
-      TR = max(x-y)   BL = min(x-y)
-    """
+def extreme_quad_corners(contour):
     hull = cv2.convexHull(contour).reshape(-1, 2).astype(np.float32)
     s = hull[:, 0] + hull[:, 1]
     d = hull[:, 0] - hull[:, 1]
-    tl = hull[np.argmin(s)]
-    br = hull[np.argmax(s)]
-    tr = hull[np.argmax(d)]
-    bl = hull[np.argmin(d)]
-    return np.array([tl, tr, br, bl], dtype=np.float32)
+    return np.array([hull[np.argmin(s)], hull[np.argmax(d)],
+                     hull[np.argmax(s)], hull[np.argmin(d)]], dtype=np.float32)
 
 
-# ── RANSAC LINE FITTING ──────────────────────────────────────────────────────
-
-def fit_line_ransac(pts: np.ndarray, iterations: int = 200,
-                    threshold: float = 2.0):
-    """
-    RANSAC line fit — robust to outliers (notch pixels, rounded corners).
-
-    Unlike cv2.fitLine (SVD, minimises sum of distances including outliers),
-    RANSAC finds the line that the MAJORITY of pixels agree on. Notch pixels
-    and rounded corner pixels become outliers and are ignored.
-
-    Returns (nx, ny, c) for nx*x + ny*y + c = 0, or None.
-    """
+def fit_line_ransac(pts, iterations=200, threshold=2.0):
     if len(pts) < 4:
         return None
     pts = pts.astype(np.float64)
     best_line = None
     best_inliers = 0
-
     for _ in range(iterations):
         idx = np.random.choice(len(pts), 2, replace=False)
         p1, p2 = pts[idx[0]], pts[idx[1]]
@@ -196,30 +65,24 @@ def fit_line_ransac(pts: np.ndarray, iterations: int = 200,
             continue
         nx, ny = -d[1] / norm, d[0] / norm
         c = -(nx * p1[0] + ny * p1[1])
-
         dists = np.abs(pts[:, 0] * nx + pts[:, 1] * ny + c)
         inliers = np.sum(dists < threshold)
-
         if inliers > best_inliers:
             best_inliers = inliers
             inlier_pts = pts[dists < threshold]
             if len(inlier_pts) >= 2:
-                line = cv2.fitLine(
-                    inlier_pts.astype(np.float32).reshape(-1, 1, 2),
-                    cv2.DIST_L2, 0, 0.01, 0.01
-                ).flatten()
+                line = cv2.fitLine(inlier_pts.astype(np.float32).reshape(-1, 1, 2),
+                                   cv2.DIST_L2, 0, 0.01, 0.01).flatten()
                 vx, vy, x0, y0 = line
                 nnx, nny = -float(vy), float(vx)
-                nnorm = np.sqrt(nnx*nnx + nny*nny)
+                nnorm = np.sqrt(nnx * nnx + nny * nny)
                 if nnorm > 1e-9:
                     nnx, nny = nnx / nnorm, nny / nnorm
-                    best_line = (nnx, nny, float(-(nnx*x0 + nny*y0)))
-
+                    best_line = (nnx, nny, float(-(nnx * x0 + nny * y0)))
     return best_line
 
 
-def _line_from_pts(p1: np.ndarray, p2: np.ndarray):
-    """Exact line through two points as (nx, ny, c) for nx*x+ny*y+c=0."""
+def _line_from_pts(p1, p2):
     d = p2.astype(np.float64) - p1.astype(np.float64)
     n = np.array([-d[1], d[0]])
     norm = np.linalg.norm(n)
@@ -230,237 +93,130 @@ def _line_from_pts(p1: np.ndarray, p2: np.ndarray):
 
 
 def _intersect(l1, l2):
-    """Intersect two lines (nx,ny,c). Returns np.float32 [x,y] or None."""
     if l1 is None or l2 is None:
         return None
     a1, b1, c1 = l1
     a2, b2, c2 = l2
-    det = a1*b2 - a2*b1
+    det = a1 * b2 - a2 * b1
     if abs(det) < 1e-9:
         return None
-    x = (b1*c2 - b2*c1) / det
-    y = (a2*c1 - a1*c2) / det
-    return np.array([x, y], dtype=np.float32)
+    return np.array([(b1 * c2 - b2 * c1) / det,
+                     (a2 * c1 - a1 * c2) / det], dtype=np.float32)
 
 
-def subpixel_refine_ransac(mask: np.ndarray,
-                            rough_corners: np.ndarray) -> np.ndarray:
-    """
-    Sub-pixel corner refinement:
-    1. Extract 1-pixel boundary ring of the mask
-    2. Assign each boundary pixel to its nearest rough edge
-    3. RANSAC line fit per edge (robust to notch/rounded-corner outliers)
-    4. Intersect adjacent fitted lines → sub-pixel corners
-
-    Falls back to rough_corners if shift > 50px (sanity check).
-    """
+def subpixel_refine_ransac(mask, rough_corners):
     k3 = np.ones((3, 3), np.uint8)
     boundary = cv2.bitwise_and(mask, cv2.bitwise_not(cv2.erode(mask, k3)))
     ys, xs = np.where(boundary > 0)
     bpts = np.column_stack([xs.astype(np.float64), ys.astype(np.float64)])
-
     if len(bpts) < 40:
         return rough_corners
-
     tl, tr, br, bl = rough_corners
-    rough_lines = [
-        _line_from_pts(tl, tr),  # top
-        _line_from_pts(tr, br),  # right
-        _line_from_pts(br, bl),  # bottom
-        _line_from_pts(bl, tl),  # left
-    ]
+    rough_lines = [_line_from_pts(tl, tr), _line_from_pts(tr, br),
+                   _line_from_pts(br, bl), _line_from_pts(bl, tl)]
 
     def perp_dist(pts, line):
         if line is None:
             return np.full(len(pts), 1e9)
         a, b, c = line
-        return np.abs(pts[:, 0]*a + pts[:, 1]*b + c)
+        return np.abs(pts[:, 0] * a + pts[:, 1] * b + c)
 
     dists = np.column_stack([perp_dist(bpts, l) for l in rough_lines])
     assignments = np.argmin(dists, axis=1)
-
     fitted = []
     names = ['top', 'right', 'bottom', 'left']
     for i in range(4):
         ep = bpts[assignments == i]
         fl = fit_line_ransac(ep) if len(ep) >= 8 else None
-        print(f"  {names[i]}: {len(ep)} px"
-              f"{'' if fl else ' (RANSAC failed, using rough)'}")
+        print(f"  {names[i]}: {len(ep)} px")
         fitted.append(fl if fl else rough_lines[i])
-
-    corners = [
-        _intersect(fitted[0], fitted[3]),  # TL = top ∩ left
-        _intersect(fitted[0], fitted[1]),  # TR = top ∩ right
-        _intersect(fitted[2], fitted[1]),  # BR = bottom ∩ right
-        _intersect(fitted[2], fitted[3]),  # BL = bottom ∩ left
-    ]
-
+    corners = [_intersect(fitted[0], fitted[3]), _intersect(fitted[0], fitted[1]),
+               _intersect(fitted[2], fitted[1]), _intersect(fitted[2], fitted[3])]
     if any(c is None for c in corners):
-        print("[REFINE] Parallel edge detected — keeping rough corners")
         return rough_corners
-
     refined = np.array(corners, dtype=np.float32)
     shift = float(np.abs(refined - rough_corners).max())
-    print(f"  RANSAC max corner shift: {shift:.2f}px")
-
+    print(f"  RANSAC max shift: {shift:.2f}px")
     if shift > 50:
-        print("[REFINE] Shift > 50px — keeping rough corners")
+        print("  Keeping rough corners")
         return rough_corners
-
     return refined
 
 
-def detect_green_corners(scene: np.ndarray):
+def detect_green_corners(scene):
     """
-    Full pipeline: mask → extreme quad corners → RANSAC sub-pixel refinement.
-    Returns (corners [TL,TR,BR,BL] float32 (4,2), blend_mask uint8 HxW)
-    or (None, None) if no green region found.
+    Full pipeline. Returns (corners float32 (4,2), blend_mask uint8)
+    or (None, None).
     """
     mask, contour = get_clean_mask(scene)
     if mask is None:
         return None, None
-
+    print(f"[MASK] Green region: {np.sum(mask>0):,} px²")
     rough = extreme_quad_corners(contour)
     print(f"[CORNERS] Rough:   TL={rough[0].astype(int)} TR={rough[1].astype(int)} "
           f"BR={rough[2].astype(int)} BL={rough[3].astype(int)}")
-
     refined = subpixel_refine_ransac(mask, rough)
     print(f"[CORNERS] Refined: TL={refined[0].astype(int)} TR={refined[1].astype(int)} "
           f"BR={refined[2].astype(int)} BL={refined[3].astype(int)}")
-
     return refined, mask
 
 
-# ── COMPOSITE ────────────────────────────────────────────────────────────────
-
-def composite(scene: np.ndarray, ui: np.ndarray,
-              corners: np.ndarray, feather: int = 3,
-              blend_mask: np.ndarray = None) -> np.ndarray:
-    """
-    Perspective-warp UI into the detected screen quad and alpha-blend.
-
-    blend_mask: use actual green pixel mask (pixel-perfect, handles notch/occlusion).
-                Falls back to fillConvexPoly if not provided.
-    """
+def composite(scene, ui, corners, feather=3, blend_mask=None):
     sh, sw = scene.shape[:2]
     uh, uw = ui.shape[:2]
-
     src = np.array([[0, 0], [uw-1, 0], [uw-1, uh-1], [0, uh-1]], dtype=np.float32)
     M = cv2.getPerspectiveTransform(src, corners)
-    warped = cv2.warpPerspective(
-        ui, M, (sw, sh),
-        flags=cv2.INTER_LANCZOS4,
-        borderMode=cv2.BORDER_REPLICATE,
-    )
-
+    warped = cv2.warpPerspective(ui, M, (sw, sh),
+                                  flags=cv2.INTER_LANCZOS4,
+                                  borderMode=cv2.BORDER_REPLICATE)
     if blend_mask is not None:
         mask_hard = blend_mask
     else:
         mask_hard = np.zeros((sh, sw), dtype=np.uint8)
         cv2.fillConvexPoly(mask_hard, corners.astype(np.int32), 255)
-
-    if feather > 0:
-        br = feather * 2 + 1
-        mf = cv2.GaussianBlur(mask_hard.astype(np.float32) / 255.0,
-                               (br, br), feather * 0.5)
-        mask = (mf * 255).astype(np.uint8)
-    else:
-        mask = mask_hard
-
-    alpha = mask.astype(np.float32)[..., np.newaxis] / 255.0
-    result = (scene.astype(np.float32) * (1 - alpha) +
-              warped.astype(np.float32) * alpha)
+    mf = cv2.GaussianBlur(mask_hard.astype(np.float32) / 255.0, (7, 7), 2)
+    alpha = mf[..., np.newaxis]
+    result = scene.astype(np.float32) * (1 - alpha) + warped.astype(np.float32) * alpha
     return np.clip(result, 0, 255).astype(np.uint8)
 
 
-def add_screen_glare(result: np.ndarray, corners: np.ndarray,
-                     opacity: float = 0.08) -> np.ndarray:
-    """Optional: add subtle specular glare to simulate phone glass."""
-    if opacity <= 0:
-        return result
-    h, w = result.shape[:2]
-    tl, tr, br, bl = corners
-
-    glare = np.zeros((h, w), dtype=np.float32)
-    cx = int(tl[0] * 0.6 + tr[0] * 0.4)
-    cy = int(tl[1] * 0.6 + bl[1] * 0.4)
-    ax = max(int(np.linalg.norm(tr - tl) * 0.45), 1)
-    ay = max(int(np.linalg.norm(bl - tl) * 0.3), 1)
-
-    cv2.ellipse(glare, (cx, cy), (ax, ay), -20, 0, 360, 1.0, -1)
-    glare = cv2.GaussianBlur(glare, (0, 0), ax * 0.6)
-
-    screen_mask = np.zeros((h, w), dtype=np.float32)
-    cv2.fillConvexPoly(screen_mask, corners.astype(np.int32), 1.0)
-    glare *= screen_mask
-
-    white = np.ones_like(result, dtype=np.float32) * 255
-    a = (glare * opacity)[..., np.newaxis]
-    out = result.astype(np.float32) * (1 - a) + white * a
-    return np.clip(out, 0, 255).astype(np.uint8)
-
-
-# ── MAIN ─────────────────────────────────────────────────────────────────────
-
 def main():
-    ap = argparse.ArgumentParser(description="Realer Estate Compositor v4 Final")
-    ap.add_argument("--scene",   required=True, help="Scene image with green screen phone")
-    ap.add_argument("--ui",      required=True, help="UI screenshot to composite")
-    ap.add_argument("--output",  required=True, help="Output image path")
-    ap.add_argument("--corners", default=None,
-                    help="Corners JSON path (default: <scene>_corners.json)")
-    ap.add_argument("--pick",    action="store_true",
-                    help="Force interactive corner picking")
-    ap.add_argument("--feather", type=int,   default=3,
-                    help="Edge feather px (default: 3)")
-    ap.add_argument("--glare",   type=float, default=0.0,
-                    help="Screen glare opacity 0-1 (default: 0)")
-    ap.add_argument("--debug",   action="store_true",
-                    help="Save corner visualization alongside output")
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--scene",   required=True)
+    ap.add_argument("--ui",      required=True)
+    ap.add_argument("--output",  required=True)
+    ap.add_argument("--corners", default=None)
+    ap.add_argument("--debug",   action="store_true")
     args = ap.parse_args()
 
     scene = cv2.imread(args.scene)
     ui    = cv2.imread(args.ui)
-    if scene is None: sys.exit(f"[ERROR] Cannot load scene: {args.scene}")
-    if ui    is None: sys.exit(f"[ERROR] Cannot load UI: {args.ui}")
+    if scene is None: sys.exit(f"[ERROR] Cannot load: {args.scene}")
+    if ui    is None: sys.exit(f"[ERROR] Cannot load: {args.ui}")
 
     sh, sw = scene.shape[:2]
     uh, uw = ui.shape[:2]
-    print(f"\n── Compositor v4 Final ──")
+    print(f"\n── Compositor ──")
     print(f"[LOAD] Scene: {sw}x{sh} | UI: {uw}x{uh}")
-    if uw > uh:
-        print(f"[WARN] UI is landscape ({uw}x{uh}) — expected portrait for phone")
 
-    corners_path = args.corners or \
-                   str(Path(args.scene).with_suffix("")) + "_corners.json"
+    corners_path = args.corners or str(Path(args.scene).with_suffix("")) + "_corners.json"
 
     blend_mask = None
-
-    if args.pick or not Path(corners_path).exists():
-        # Try auto-detection first; fall back to interactive
-        print(f"\n[DETECT] Auto-detecting green screen corners...")
+    if Path(corners_path).exists():
+        with open(corners_path) as f:
+            data = json.load(f)
+        corners = np.array(data["corners"], dtype=np.float32)
+        _, blend_mask = get_clean_mask(scene)
+        print(f"[CORNERS] Loaded from {corners_path}")
+    else:
         corners, blend_mask = detect_green_corners(scene)
         if corners is None:
-            print("[DETECT] Auto-detection failed — opening interactive picker")
-            corners = pick_corners_interactively(scene, corners_path)
-        else:
-            with open(corners_path, 'w') as f:
-                json.dump({"corners": corners.tolist(),
-                           "image_size": [sw, sh],
-                           "method": "ransac_subpixel"}, f, indent=2)
-            print(f"[SAVED] Corners → {corners_path}")
-    else:
-        print(f"\n[CORNERS] Loading saved corners...")
-        corners = load_corners(corners_path)
-        # Re-detect mask for pixel-accurate blending even when using saved corners
-        _, blend_mask = get_clean_mask(scene)
+            sys.exit("[ERROR] No green screen detected")
+        with open(corners_path, "w") as f:
+            json.dump({"corners": corners.tolist(), "image_size": [sw, sh]}, f, indent=2)
+        print(f"[SAVED] Corners → {corners_path}")
 
-    print(f"\n[COMPOSITE] Warping UI into screen quad...")
-    result = composite(scene, ui, corners, args.feather, blend_mask)
-
-    if args.glare > 0:
-        print(f"[GLARE] Adding {args.glare:.0%} screen glare...")
-        result = add_screen_glare(result, corners, args.glare)
+    result = composite(scene, ui, corners, blend_mask=blend_mask)
 
     if args.debug:
         vis = scene.copy()
@@ -469,21 +225,13 @@ def main():
             cv2.circle(vis, tuple(pt.astype(int)), 8, (0, 0, 255), -1)
             cv2.putText(vis, f"{lbl}({pt[0]:.0f},{pt[1]:.0f})",
                         (int(pt[0])+8, int(pt[1])+5),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 255, 255), 2)
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
         debug_path = str(Path(args.output).with_suffix("")) + "_corners.png"
         cv2.imwrite(debug_path, vis)
-        print(f"[DEBUG] Corner viz → {debug_path}")
 
     Path(args.output).parent.mkdir(parents=True, exist_ok=True)
     cv2.imwrite(args.output, result)
-    print(f"\n[SAVED] {args.output}")
-    print(f"\n── Next run (same scene, new UI) ─────────────────────────")
-    print(f"  python compositor_v4_final.py \\")
-    print(f"    --scene {args.scene} \\")
-    print(f"    --ui NEW_UI.png \\")
-    print(f"    --output new_result.png")
-    print(f"  (corners auto-loaded from {corners_path})")
-    print(f"──────────────────────────────────────────────────────────\n")
+    print(f"[SAVED] {args.output}")
 
 
 if __name__ == "__main__":
