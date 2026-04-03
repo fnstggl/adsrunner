@@ -92,7 +92,6 @@ def do_composite():
     if ui_arr is None:
         return jsonify({"error": "Could not decode the UI image."}), 400
 
-<<<<<<< fix/corner-detection-bugs
     # ── Dimension sanity check ───────────────────────────────────────────────
     # Corners were detected on the full-resolution original; verify the scene
     # uploaded now is the same resolution so coordinates are in the right space.
@@ -119,17 +118,12 @@ def do_composite():
         cv2.putText(debug_arr, label, (int(pt[0]) + 12, int(pt[1]) + 6),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 255), 2)
 
-=======
-    corners = np.array(corners_data["corners"], dtype=np.float32)
-
->>>>>>> main
     # ── Composite ────────────────────────────────────────────────────────────
     try:
         result = compositor.composite(scene_arr, ui_arr, corners)
     except Exception as exc:
         return jsonify({"error": f"Compositor error: {exc}"}), 500
 
-<<<<<<< fix/corner-detection-bugs
     # ── Encode results ───────────────────────────────────────────────────────
     import base64
 
@@ -146,20 +140,6 @@ def do_composite():
             "corners": corners_data["corners"],
             "detection_size": [stored_w, stored_h],
             "composite_size": [sw, sh],
-=======
-    # ── Encode result ────────────────────────────────────────────────────────
-    ok, buf = cv2.imencode(".png", result)
-    if not ok:
-        return jsonify({"error": "Failed to encode output image."}), 500
-
-    import base64
-    img_b64 = base64.b64encode(buf.tobytes()).decode()
-
-    return jsonify(
-        {
-            "image": img_b64,
-            "corners": corners_data["corners"],
->>>>>>> main
             "confidence": corners_data.get("confidence", "unknown"),
             "notes": corners_data.get("notes", ""),
             "cached": cached,
