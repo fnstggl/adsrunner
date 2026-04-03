@@ -371,15 +371,9 @@ def detect_green_corners(scene: np.ndarray) -> tuple:
     # Result: < 1px corner error (same technique as calibration board detection).
     corners = _refine_quad_by_line_fitting(cleaned, corners)
 
-    # ── Blend mask: use the actual green pixel mask (pixel-perfect) ──────────
-    # WHY: fillConvexPoly only fills the convex quad from detected corners, which
-    # can miss green pixels that are slightly outside the quad — e.g. the sliver
-    # of green visible above the phone's top bezel/lip.  Using 'cleaned' (the
-    # morphologically-cleaned chroma mask) means the UI composites over EVERY
-    # green pixel.  Non-green pixels (bezel, thumb, any physical occlusion) never
-    # pass the green test, so their alpha stays 0 and the original scene shows
-    # through automatically — no geometry hacking needed.
-    blend_mask = cleaned
+    # ── Blend mask: filled polygon from refined corners ────────────────────────
+    blend_mask = np.zeros(scene.shape[:2], dtype=np.uint8)
+    cv2.fillConvexPoly(blend_mask, corners.astype(np.int32), 255)
 
     print(f"[CV] Green screen detected — area={area:.0f}px²")
     print(f"     TL:{corners[0].astype(int)}  TR:{corners[1].astype(int)}")
@@ -423,12 +417,8 @@ def composite(scene: np.ndarray, ui: np.ndarray,
     warped = cv2.warpPerspective(
         ui, M, (sw, sh),
         flags=cv2.INTER_LANCZOS4,
-        # BORDER_REPLICATE: pixels whose inverse-mapped coords fall just outside
-        # the UI image (e.g. the thin sliver of green above TL/TR that sits
-        # behind the phone bezel) inherit the nearest valid UI edge row/column
-        # instead of black, keeping the blend seamless where the chroma mask
-        # extends slightly beyond the fitted quad corners.
-        borderMode=cv2.BORDER_REPLICATE,
+        borderMode=cv2.BORDER_CONSTANT,
+        borderValue=(0, 0, 0)
     )
 
     # Build blend mask
