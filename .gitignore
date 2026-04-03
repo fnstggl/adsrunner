@@ -1,0 +1,10 @@
+.env
+__pycache__/
+*.py[cod]
+tmp/
+/tmp/corners_cache/
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
