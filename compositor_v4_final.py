@@ -21,7 +21,7 @@ from pathlib import Path
 def get_clean_mask(scene):
     h, w = scene.shape[:2]
     hsv = cv2.cvtColor(scene, cv2.COLOR_BGR2HSV)
-    mask = cv2.inRange(hsv, np.array([40, 150, 60]), np.array([95, 255, 255]))
+    mask = cv2.inRange(hsv, np.array([40, 60, 60]), np.array([95, 255, 255]))
     k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (11, 11))
     mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, k, iterations=2)
     mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN,  k, iterations=1)
