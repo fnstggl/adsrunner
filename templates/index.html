@@ -1,0 +1,523 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Green Screen Compositor</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:       #0f1117;
+      --surface:  #1a1d27;
+      --border:   #2e3245;
+      --accent:   #5b6ef5;
+      --accent-h: #7b8bff;
+      --text:     #e2e4ef;
+      --muted:    #6b7094;
+      --green:    #2dd4a0;
+      --red:      #f05e72;
+      --radius:   12px;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 40px 20px 80px;
+    }
+
+    h1 {
+      font-size: 1.5rem;
+      font-weight: 600;
+      letter-spacing: -0.02em;
+      margin-bottom: 6px;
+    }
+
+    .subtitle {
+      color: var(--muted);
+      font-size: 0.85rem;
+      margin-bottom: 40px;
+    }
+
+    .upload-row {
+      display: flex;
+      gap: 20px;
+      width: 100%;
+      max-width: 860px;
+      margin-bottom: 24px;
+    }
+
+    .drop-zone {
+      flex: 1;
+      border: 2px dashed var(--border);
+      border-radius: var(--radius);
+      background: var(--surface);
+      padding: 28px 20px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 10px;
+      cursor: pointer;
+      transition: border-color 0.15s, background 0.15s;
+      position: relative;
+      min-height: 200px;
+      justify-content: center;
+    }
+
+    .drop-zone:hover, .drop-zone.drag-over {
+      border-color: var(--accent);
+      background: #1e2135;
+    }
+
+    .drop-zone.has-file {
+      border-color: var(--green);
+      border-style: solid;
+    }
+
+    .drop-zone input[type="file"] {
+      position: absolute;
+      inset: 0;
+      opacity: 0;
+      cursor: pointer;
+      width: 100%;
+      height: 100%;
+    }
+
+    .drop-icon {
+      font-size: 2rem;
+      line-height: 1;
+    }
+
+    .drop-label {
+      font-weight: 600;
+      font-size: 0.95rem;
+    }
+
+    .drop-hint {
+      color: var(--muted);
+      font-size: 0.78rem;
+      text-align: center;
+    }
+
+    .drop-preview {
+      width: 100%;
+      max-height: 160px;
+      object-fit: contain;
+      border-radius: 6px;
+      display: none;
+    }
+
+    .drop-zone.has-file .drop-preview { display: block; }
+    .drop-zone.has-file .drop-icon,
+    .drop-zone.has-file .drop-hint { display: none; }
+    .drop-zone.has-file .drop-label { font-size: 0.78rem; color: var(--green); }
+
+    .btn-composite {
+      display: block;
+      width: 100%;
+      max-width: 860px;
+      padding: 14px;
+      background: var(--accent);
+      color: #fff;
+      border: none;
+      border-radius: var(--radius);
+      font-size: 1rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.15s, opacity 0.15s;
+      position: relative;
+    }
+
+    .btn-composite:hover { background: var(--accent-h); }
+    .btn-composite:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    /* ── Loading ── */
+    .loading-bar {
+      display: none;
+      width: 100%;
+      max-width: 860px;
+      height: 3px;
+      background: var(--border);
+      border-radius: 99px;
+      margin-top: 12px;
+      overflow: hidden;
+    }
+
+    .loading-bar.active { display: block; }
+
+    .loading-fill {
+      height: 100%;
+      width: 0%;
+      background: linear-gradient(90deg, var(--accent), var(--green));
+      border-radius: 99px;
+      animation: progress 4s ease-in-out forwards;
+    }
+
+    @keyframes progress {
+      0%   { width: 0%; }
+      60%  { width: 75%; }
+      90%  { width: 90%; }
+      100% { width: 95%; }
+    }
+
+    .status-text {
+      color: var(--muted);
+      font-size: 0.82rem;
+      margin-top: 8px;
+      min-height: 18px;
+      text-align: center;
+      width: 100%;
+      max-width: 860px;
+    }
+
+    /* ── Error ── */
+    .error-box {
+      display: none;
+      width: 100%;
+      max-width: 860px;
+      background: rgba(240, 94, 114, 0.12);
+      border: 1px solid rgba(240, 94, 114, 0.4);
+      border-radius: var(--radius);
+      padding: 14px 18px;
+      color: var(--red);
+      font-size: 0.88rem;
+      margin-top: 16px;
+    }
+
+    /* ── Result ── */
+    .result-section {
+      display: none;
+      flex-direction: column;
+      align-items: center;
+      gap: 16px;
+      width: 100%;
+      max-width: 860px;
+      margin-top: 32px;
+    }
+
+    .result-section.visible { display: flex; }
+
+    .result-title {
+      font-weight: 600;
+      font-size: 1rem;
+      align-self: flex-start;
+    }
+
+    .result-img {
+      width: 100%;
+      border-radius: var(--radius);
+      border: 1px solid var(--border);
+    }
+
+    .result-actions {
+      display: flex;
+      gap: 12px;
+      align-self: flex-start;
+    }
+
+    .btn-download {
+      padding: 9px 22px;
+      background: var(--green);
+      color: #0f1117;
+      border: none;
+      border-radius: 8px;
+      font-size: 0.88rem;
+      font-weight: 700;
+      cursor: pointer;
+      text-decoration: none;
+      display: inline-block;
+    }
+
+    /* ── Debug overlay ── */
+    .debug-panel {
+      width: 100%;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 14px 18px;
+      font-family: "SF Mono", "Fira Code", monospace;
+      font-size: 0.78rem;
+      color: var(--muted);
+      line-height: 1.7;
+    }
+
+    .debug-panel .debug-header {
+      color: var(--text);
+      font-weight: 600;
+      margin-bottom: 6px;
+      font-family: inherit;
+    }
+
+    .debug-panel .corner-row {
+      display: flex;
+      gap: 24px;
+      flex-wrap: wrap;
+    }
+
+    .debug-panel .corner-item { min-width: 120px; }
+    .debug-panel .corner-label { color: var(--accent-h); }
+    .debug-panel .cache-badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 99px;
+      font-size: 0.7rem;
+      font-weight: 600;
+      margin-left: 8px;
+    }
+    .cache-badge.hit  { background: rgba(45,212,160,0.15); color: var(--green); }
+    .cache-badge.miss { background: rgba(91,110,245,0.15); color: var(--accent-h); }
+
+    @media (max-width: 600px) {
+      .upload-row { flex-direction: column; }
+    }
+  </style>
+</head>
+<body>
+
+<h1>Green Screen Compositor</h1>
+<p class="subtitle">Upload a greenscreen phone scene + UI screenshot to composite them together.</p>
+
+<div class="upload-row">
+  <!-- Zone 1: Scene -->
+  <div class="drop-zone" id="zone-scene" role="button" aria-label="Upload greenscreen scene">
+    <input type="file" id="input-scene" accept="image/*" />
+    <span class="drop-icon">📷</span>
+    <span class="drop-label">Greenscreen Scene</span>
+    <span class="drop-hint">Drag & drop or click<br>JPG / PNG / WEBP — max 20 MB</span>
+    <img class="drop-preview" id="preview-scene" alt="Scene preview" />
+  </div>
+
+  <!-- Zone 2: UI -->
+  <div class="drop-zone" id="zone-ui" role="button" aria-label="Upload UI screenshot">
+    <input type="file" id="input-ui" accept="image/*" />
+    <span class="drop-icon">📱</span>
+    <span class="drop-label">UI Screenshot</span>
+    <span class="drop-hint">Drag & drop or click<br>JPG / PNG / WEBP — max 20 MB</span>
+    <img class="drop-preview" id="preview-ui" alt="UI preview" />
+  </div>
+</div>
+
+<button class="btn-composite" id="btn-composite" disabled>Composite</button>
+
+<div class="loading-bar" id="loading-bar">
+  <div class="loading-fill" id="loading-fill"></div>
+</div>
+<p class="status-text" id="status-text"></p>
+
+<div class="error-box" id="error-box"></div>
+
+<div class="result-section" id="result-section">
+  <p class="result-title">Result</p>
+  <img class="result-img" id="result-img" alt="Composited output" />
+  <div class="result-actions">
+    <a class="btn-download" id="btn-download" download="composited.png">Download PNG</a>
+  </div>
+  <div class="debug-panel" id="debug-panel">
+    <div class="debug-header">Detected corners <span class="cache-badge" id="cache-badge"></span></div>
+    <div class="corner-row" id="corner-row"></div>
+    <div id="debug-notes" style="margin-top:6px;"></div>
+    <div id="size-info" style="margin-top:4px;"></div>
+  </div>
+
+  <details id="debug-quad-wrap" style="width:100%;">
+    <summary style="cursor:pointer;color:var(--muted);font-size:0.82rem;
+                    padding:6px 0;user-select:none;">
+      Corner verification overlay (click to expand)
+    </summary>
+    <img class="result-img" id="debug-img" alt="Detected corners overlaid on scene"
+         style="margin-top:10px;" />
+  </details>
+</div>
+
+<script>
+  const inputScene  = document.getElementById('input-scene');
+  const inputUi     = document.getElementById('input-ui');
+  const zoneScene   = document.getElementById('zone-scene');
+  const zoneUi      = document.getElementById('zone-ui');
+  const previewScene = document.getElementById('preview-scene');
+  const previewUi   = document.getElementById('preview-ui');
+  const btnComposite = document.getElementById('btn-composite');
+  const loadingBar  = document.getElementById('loading-bar');
+  const loadingFill = document.getElementById('loading-fill');
+  const statusText  = document.getElementById('status-text');
+  const errorBox    = document.getElementById('error-box');
+  const resultSection = document.getElementById('result-section');
+  const resultImg   = document.getElementById('result-img');
+  const btnDownload = document.getElementById('btn-download');
+  const debugPanel  = document.getElementById('debug-panel');
+  const cornerRow   = document.getElementById('corner-row');
+  const cacheBadge  = document.getElementById('cache-badge');
+  const debugNotes  = document.getElementById('debug-notes');
+  const sizeInfo    = document.getElementById('size-info');
+  const debugImg    = document.getElementById('debug-img');
+
+  let fileScene = null;
+  let fileUi    = null;
+
+  // ── File helpers ────────────────────────────────────────────────────────
+  function setFile(which, file) {
+    if (!file || !file.type.startsWith('image/')) return;
+    if (which === 'scene') {
+      fileScene = file;
+      showPreview(previewScene, zoneScene, file,
+        `✔ ${truncate(file.name, 22)}`);
+    } else {
+      fileUi = file;
+      showPreview(previewUi, zoneUi, file,
+        `✔ ${truncate(file.name, 22)}`);
+    }
+    updateBtn();
+  }
+
+  function showPreview(imgEl, zone, file, label) {
+    const reader = new FileReader();
+    reader.onload = e => { imgEl.src = e.target.result; };
+    reader.readAsDataURL(file);
+    zone.classList.add('has-file');
+    zone.querySelector('.drop-label').textContent = label;
+  }
+
+  function truncate(str, n) {
+    return str.length > n ? str.slice(0, n - 1) + '…' : str;
+  }
+
+  function updateBtn() {
+    btnComposite.disabled = !(fileScene && fileUi);
+  }
+
+  // ── Input events ────────────────────────────────────────────────────────
+  inputScene.addEventListener('change', () => {
+    if (inputScene.files[0]) setFile('scene', inputScene.files[0]);
+  });
+  inputUi.addEventListener('change', () => {
+    if (inputUi.files[0]) setFile('ui', inputUi.files[0]);
+  });
+
+  // ── Drag & drop ─────────────────────────────────────────────────────────
+  function setupDrop(zone, which) {
+    zone.addEventListener('dragover', e => {
+      e.preventDefault();
+      zone.classList.add('drag-over');
+    });
+    zone.addEventListener('dragleave', () => zone.classList.remove('drag-over'));
+    zone.addEventListener('drop', e => {
+      e.preventDefault();
+      zone.classList.remove('drag-over');
+      const file = e.dataTransfer.files[0];
+      setFile(which, file);
+    });
+  }
+
+  setupDrop(zoneScene, 'scene');
+  setupDrop(zoneUi, 'ui');
+
+  // ── Composite ────────────────────────────────────────────────────────────
+  btnComposite.addEventListener('click', async () => {
+    if (!fileScene || !fileUi) return;
+
+    // Reset UI
+    errorBox.style.display = 'none';
+    resultSection.classList.remove('visible');
+    loadingBar.classList.add('active');
+    // Restart animation
+    loadingFill.style.animation = 'none';
+    void loadingFill.offsetWidth;
+    loadingFill.style.animation = '';
+    btnComposite.disabled = true;
+    statusText.textContent = 'Sending images to Claude Vision API…';
+
+    const form = new FormData();
+    form.append('scene', fileScene);
+    form.append('ui', fileUi);
+
+    try {
+      const res = await fetch('/composite', { method: 'POST', body: form });
+      const data = await res.json();
+
+      loadingBar.classList.remove('active');
+
+      if (!res.ok || data.error) {
+        showError(data.error || `Server error ${res.status}`);
+        return;
+      }
+
+      // Show result
+      statusText.textContent = '';
+      const src = `data:image/png;base64,${data.image}`;
+      resultImg.src = src;
+      btnDownload.href = src;
+      resultSection.classList.add('visible');
+
+      // Debug panel
+      renderDebug(data);
+
+    } catch (err) {
+      loadingBar.classList.remove('active');
+      showError(`Network error: ${err.message}`);
+    } finally {
+      btnComposite.disabled = false;
+    }
+  });
+
+  function showError(msg) {
+    errorBox.textContent = msg;
+    errorBox.style.display = 'block';
+    statusText.textContent = '';
+  }
+
+  function renderDebug(data) {
+    const labels = ['TL', 'TR', 'BR', 'BL'];
+    const corners = data.corners || [];
+
+    // Corner table — flag if axis-aligned (bug indicator)
+    const isAxisAligned = corners.length === 4 &&
+      Math.abs(corners[0][1] - corners[1][1]) < 5 &&
+      Math.abs(corners[2][1] - corners[3][1]) < 5;
+
+    cornerRow.innerHTML = corners.map((pt, i) =>
+      `<div class="corner-item">
+        <span class="corner-label">${labels[i]}</span>
+        <span> [${pt[0]}, ${pt[1]}]</span>
+      </div>`
+    ).join('') + (isAxisAligned
+      ? `<div style="color:var(--red);margin-top:4px;width:100%;">
+           ⚠ Corners look axis-aligned — may be a bounding box, not true quad.
+         </div>`
+      : '');
+
+    cacheBadge.textContent = data.cached ? 'cache hit' : 'fresh detection';
+    cacheBadge.className = `cache-badge ${data.cached ? 'hit' : 'miss'}`;
+
+    debugNotes.innerHTML = data.notes
+      ? `<span style="color:var(--text)">Notes:</span> ${escapeHtml(data.notes)}`
+        + (data.confidence ? ` &nbsp;·&nbsp; Confidence: ${escapeHtml(data.confidence)}` : '')
+      : '';
+
+    // Resolution info
+    if (data.detection_size && data.composite_size) {
+      const [dw, dh] = data.detection_size;
+      const [cw, ch] = data.composite_size;
+      const match = dw === cw && dh === ch;
+      sizeInfo.innerHTML =
+        `<span style="color:var(--muted)">Detection res:</span> ${dw}×${dh} &nbsp;·&nbsp; `
+        + `<span style="color:var(--muted)">Composite res:</span> ${cw}×${ch}`
+        + (match ? '' : ' <span style="color:var(--red)">⚠ mismatch — corners scaled</span>');
+    }
+
+    // Debug overlay image
+    if (data.debug_image) {
+      debugImg.src = `data:image/png;base64,${data.debug_image}`;
+    }
+  }
+
+  function escapeHtml(s) {
+    return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  }
+</script>
+</body>
+</html>
