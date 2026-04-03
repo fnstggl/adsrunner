@@ -146,38 +146,68 @@ def _sort_corners(pts: np.ndarray) -> np.ndarray:
 
 def detect_green_corners(scene: np.ndarray) -> tuple:
     """
-    Detect green screen corners via HSV chroma key analysis.
+    Detect green screen corners using BGR channel dominance.
 
-    This is the primary detection method — pixel-perfect, free, and instant.
-    Works because the green screen placeholder is a solid saturated green
-    rectangle that stands out clearly in HSV space.
+    WHY BGR dominance instead of HSV thresholding:
+    - HSV thresholds are brittle: JPEG compression, camera white balance, glass
+      reflections, and exposure all shift the hue/saturation unpredictably.
+    - BGR dominance (green channel significantly beats both red AND blue) is
+      robust because it's a ratio test that adapts to any overall brightness.
+    - A chroma-key green screen will always have G >> R and G >> B regardless
+      of lighting, making this the correct first-principles approach.
 
     Returns (corners [TL,TR,BR,BL] as float32 (4,2), blend_mask uint8 HxW)
     or (None, None) if no adequate green region is found.
     """
+    # Cast to signed int16 so subtraction doesn't underflow
+    b = scene[:, :, 0].astype(np.int16)
+    g = scene[:, :, 1].astype(np.int16)
+    r = scene[:, :, 2].astype(np.int16)
+
+    # Primary mask: green channel must beat both red and blue by a clear margin.
+    # Margin of 20 handles slight colour casts while filtering out neutrals/whites.
+    margin = 20
+    mask_bgr = ((g - r > margin) & (g - b > margin)).astype(np.uint8) * 255
+
+    # Secondary filter: also require a minimum absolute green value so very dark
+    # almost-zero pixels don't sneak through (e.g. dark green foliage in bg).
+    # And confirm we're in the green hue range via HSV (avoids yellow/olive blobs).
     hsv = cv2.cvtColor(scene, cv2.COLOR_BGR2HSV)
+    # H: 25-100 covers yellow-green → green → cyan in OpenCV 0-179 scale.
+    mask_hsv = cv2.inRange(hsv,
+                           np.array([25, 30, 40], dtype=np.uint8),
+                           np.array([100, 255, 255], dtype=np.uint8))
 
-    # Broad green range to handle lighting and white-balance variations.
-    # OpenCV hue is 0-179 (half of 0-360°). Pure chroma-key green ≈ H 60-80.
-    lower = np.array([35, 40, 40], dtype=np.uint8)
-    upper = np.array([90, 255, 255], dtype=np.uint8)
-    raw_mask = cv2.inRange(hsv, lower, upper)
+    # Use the intersection: must pass both tests. Falls back to BGR-only if the
+    # intersection is unexpectedly small (e.g. unusual white-balance shift).
+    raw_mask = cv2.bitwise_and(mask_bgr, mask_hsv)
+    if cv2.countNonZero(raw_mask) < cv2.countNonZero(mask_bgr) * 0.25:
+        # HSV filter removed too much — use BGR dominance alone
+        print("[CV] HSV filter too aggressive, using BGR-dominance mask only")
+        raw_mask = mask_bgr
 
-    # Morphological cleanup: fill holes caused by specular highlights,
-    # then remove tiny stray blobs.
-    k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (9, 9))
+    total_px = scene.shape[0] * scene.shape[1]
+    print(f"[CV] Raw green pixels: {cv2.countNonZero(raw_mask)}"
+          f"  ({100*cv2.countNonZero(raw_mask)/total_px:.1f}% of image)")
+
+    # Morphological cleanup: close gaps from specular highlights, open to remove noise.
+    k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (11, 11))
     cleaned = cv2.morphologyEx(raw_mask, cv2.MORPH_CLOSE, k)
     cleaned = cv2.morphologyEx(cleaned, cv2.MORPH_OPEN, k)
 
     contours, _ = cv2.findContours(cleaned, cv2.RETR_EXTERNAL,
                                    cv2.CHAIN_APPROX_SIMPLE)
     if not contours:
+        print("[CV] No green contours found after morphological cleanup")
         return None, None
 
-    # Require the region to be at least 0.5 % of image area (filters noise).
+    # Take the single largest green region (the screen, not stray background objects).
     largest = max(contours, key=cv2.contourArea)
-    min_area = scene.shape[0] * scene.shape[1] * 0.005
-    if cv2.contourArea(largest) < min_area:
+    area = cv2.contourArea(largest)
+    min_area = total_px * 0.003   # at least 0.3 % of image
+    print(f"[CV] Largest contour area: {area:.0f}px²  (min: {min_area:.0f}px²)")
+    if area < min_area:
+        print("[CV] Green region too small — falling back to Vision API")
         return None, None
 
     # Convex hull → approximate quadrilateral
@@ -188,8 +218,8 @@ def detect_green_corners(scene: np.ndarray) -> tuple:
     if len(approx) == 4:
         pts = approx.reshape(4, 2).astype(np.float32)
     else:
-        # More or fewer than 4 vertices — pick the 4 extreme-sum/diff points
-        # from the convex hull directly.
+        # Hull didn't simplify to exactly 4 points — pick the 4 corners as the
+        # extreme points in the diagonal directions (works for any convex quad).
         h_pts = hull.reshape(-1, 2).astype(np.float32)
         s = h_pts[:, 0] + h_pts[:, 1]
         d = h_pts[:, 0] - h_pts[:, 1]
@@ -197,13 +227,12 @@ def detect_green_corners(scene: np.ndarray) -> tuple:
 
     corners = _sort_corners(pts)
 
-    # Build blend mask as filled convex polygon of the detected screen quad.
-    # Using the polygon (not the raw HSV mask) avoids holes from screen glare
-    # while staying exactly within the screen boundary.
+    # Build the blend mask as a filled convex polygon.
+    # This avoids mask holes from screen glare while staying within screen bounds.
     blend_mask = np.zeros(scene.shape[:2], dtype=np.uint8)
     cv2.fillConvexPoly(blend_mask, corners.astype(np.int32), 255)
 
-    print(f"[CV] Green screen detected — area={cv2.contourArea(largest):.0f}px²")
+    print(f"[CV] Green screen detected — area={area:.0f}px²")
     print(f"     TL:{corners[0].astype(int)}  TR:{corners[1].astype(int)}")
     print(f"     BR:{corners[2].astype(int)}  BL:{corners[3].astype(int)}")
 

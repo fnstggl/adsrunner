@@ -63,51 +63,49 @@ def _build_prompt(w: int, h: int, retry: bool = False) -> str:
     extra = ""
     if retry:
         extra = """
-IMPORTANT — YOUR PREVIOUS ATTEMPT RETURNED AN AXIS-ALIGNED BOUNDING BOX.
-That means all four Y-values on the top edge were equal, and all four Y-values
-on the bottom edge were equal. That is WRONG unless the phone is perfectly
-upright — check the actual tilt and trace each bezel edge individually.
+CORRECTION NEEDED: Your previous corners describe a rectangle that is
+suspiciously axis-aligned. Re-examine the phone tilt and re-trace each
+bezel edge individually before answering.
 """
     return f"""You are a precision image coordinate extraction system.
 {extra}
-The image shows a smartphone. The phone screen may be upright (aligned with
-image axes) or tilted/rotated at an angle — examine the image carefully.
-The screen displays either a solid green or colored rectangle (chroma key
-placeholder) or a mobile UI.
-
-Your task: Find the EXACT pixel coordinates of the four corners of the phone
-SCREEN — meaning the active display area inside the bezel, NOT the phone body.
-
 The image dimensions are {w} x {h} pixels.
 
+TARGET: The phone (or object) whose screen is showing a SOLID BRIGHT GREEN
+rectangle — a chroma-key green screen placeholder. If there are multiple
+phones, focus exclusively on the one with the solid green display. Ignore
+any phone that already shows a real UI or app content.
+
+Your task: Return the EXACT pixel coordinates of the four inner corners of
+that green screen area — i.e. where the GREEN PIXELS begin, at the inner
+edge of the bezel. These four points define the quadrilateral that contains
+the green color.
+
 STEP-BY-STEP:
-1. Identify the phone screen region (bright/colored display area).
-2. Locate where the LEFT bezel edge meets the TOP bezel edge → TL corner.
-3. Locate where the RIGHT bezel edge meets the TOP bezel edge → TR corner.
-4. Locate where the RIGHT bezel edge meets the BOTTOM bezel edge → BR corner.
-5. Locate where the LEFT bezel edge meets the BOTTOM bezel edge → BL corner.
+1. Find the solid green rectangle on the phone screen.
+2. Trace its LEFT edge upward to where it meets the TOP edge → that is TL.
+3. Trace its RIGHT edge upward to where it meets the TOP edge → that is TR.
+4. Trace its RIGHT edge downward to where it meets the BOTTOM edge → BR.
+5. Trace its LEFT edge downward to where it meets the BOTTOM edge → BL.
 
-TILT RULES (observe the actual phone angle, do not assume):
-- If the phone is tilted, TL/TR will have different y-values and BL/BR will
-  have different y-values — all four corners form a non-rectangular quad.
-- If the phone is upright, TL/TR share the same y-value and BL/BR share
-  the same y-value — that is correct and expected for an upright phone.
+TILT: The phone may be upright or tilted. Observe the actual angle and
+report real corner coordinates — do not assume any particular orientation.
+- Tilted phone: TL and TR will have noticeably different y-values.
+- Upright phone: TL and TR will have the same y-value (that is correct).
 
-IMPORTANT — avoid these errors:
-- Do NOT return the phone body outline corners; use the inner screen edge.
-- Do NOT include the bezel itself in the screen area.
-- For rounded screen corners, pick where the straight bezel edges would
-  intersect, not the extreme tip of the rounded corner.
-- Report coordinates in pixels counted from the TOP-LEFT of the image.
+AVOID:
+- Returning corners of a non-green phone or of the phone body outline.
+- Including the bezel width in the green area — start at where green begins.
+- Rounding corner coordinates to suspiciously round numbers.
 
-Return ONLY a JSON object, no other text:
+Return ONLY valid JSON, no other text:
 {{
   "tl": [x, y],
   "tr": [x, y],
   "br": [x, y],
   "bl": [x, y],
   "confidence": "high|medium|low",
-  "notes": "describe phone orientation and how confident you are in each corner"
+  "notes": "which phone has the green screen, its tilt, and your corner confidence"
 }}"""
 
 
