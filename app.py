@@ -92,14 +92,61 @@ def do_composite():
     if ui_arr is None:
         return jsonify({"error": "Could not decode the UI image."}), 400
 
+<<<<<<< fix/corner-detection-bugs
+    # ── Dimension sanity check ───────────────────────────────────────────────
+    # Corners were detected on the full-resolution original; verify the scene
+    # uploaded now is the same resolution so coordinates are in the right space.
+    sh, sw = scene_arr.shape[:2]
+    stored_w, stored_h = corners_data.get("image_size", [sw, sh])
+    if sw != stored_w or sh != stored_h:
+        print(f"[WARN] Dimension mismatch: detection was on {stored_w}x{stored_h}, "
+              f"composite scene is {sw}x{sh}. Scaling corners.")
+        sx = sw / stored_w
+        sy = sh / stored_h
+        corners_data["corners"] = [
+            [int(pt[0] * sx), int(pt[1] * sy)]
+            for pt in corners_data["corners"]
+        ]
+
     corners = np.array(corners_data["corners"], dtype=np.float32)
 
+    # ── Debug quad: draw detected polygon on scene copy ──────────────────────
+    debug_arr = scene_arr.copy()
+    quad = corners.astype(np.int32)
+    cv2.polylines(debug_arr, [quad], isClosed=True, color=(0, 255, 0), thickness=3)
+    for pt, label in zip(quad, ["TL", "TR", "BR", "BL"]):
+        cv2.circle(debug_arr, tuple(pt), 10, (0, 0, 255), -1)
+        cv2.putText(debug_arr, label, (int(pt[0]) + 12, int(pt[1]) + 6),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 255), 2)
+
+=======
+    corners = np.array(corners_data["corners"], dtype=np.float32)
+
+>>>>>>> main
     # ── Composite ────────────────────────────────────────────────────────────
     try:
         result = compositor.composite(scene_arr, ui_arr, corners)
     except Exception as exc:
         return jsonify({"error": f"Compositor error: {exc}"}), 500
 
+<<<<<<< fix/corner-detection-bugs
+    # ── Encode results ───────────────────────────────────────────────────────
+    import base64
+
+    def _encode_png(arr: np.ndarray) -> str:
+        ok, buf = cv2.imencode(".png", arr)
+        if not ok:
+            raise RuntimeError("cv2.imencode failed")
+        return base64.b64encode(buf.tobytes()).decode()
+
+    return jsonify(
+        {
+            "image": _encode_png(result),
+            "debug_image": _encode_png(debug_arr),
+            "corners": corners_data["corners"],
+            "detection_size": [stored_w, stored_h],
+            "composite_size": [sw, sh],
+=======
     # ── Encode result ────────────────────────────────────────────────────────
     ok, buf = cv2.imencode(".png", result)
     if not ok:
@@ -112,6 +159,7 @@ def do_composite():
         {
             "image": img_b64,
             "corners": corners_data["corners"],
+>>>>>>> main
             "confidence": corners_data.get("confidence", "unknown"),
             "notes": corners_data.get("notes", ""),
             "cached": cached,

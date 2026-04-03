@@ -321,7 +321,17 @@
     <div class="debug-header">Detected corners <span class="cache-badge" id="cache-badge"></span></div>
     <div class="corner-row" id="corner-row"></div>
     <div id="debug-notes" style="margin-top:6px;"></div>
+    <div id="size-info" style="margin-top:4px;"></div>
   </div>
+
+  <details id="debug-quad-wrap" style="width:100%;">
+    <summary style="cursor:pointer;color:var(--muted);font-size:0.82rem;
+                    padding:6px 0;user-select:none;">
+      Corner verification overlay (click to expand)
+    </summary>
+    <img class="result-img" id="debug-img" alt="Detected corners overlaid on scene"
+         style="margin-top:10px;" />
+  </details>
 </div>
 
 <script>
@@ -343,6 +353,11 @@
   const cornerRow   = document.getElementById('corner-row');
   const cacheBadge  = document.getElementById('cache-badge');
   const debugNotes  = document.getElementById('debug-notes');
+<<<<<<< fix/corner-detection-bugs
+  const sizeInfo    = document.getElementById('size-info');
+  const debugImg    = document.getElementById('debug-img');
+=======
+>>>>>>> main
 
   let fileScene = null;
   let fileUi    = null;
@@ -460,12 +475,31 @@
 
   function renderDebug(data) {
     const labels = ['TL', 'TR', 'BR', 'BL'];
+<<<<<<< fix/corner-detection-bugs
+    const corners = data.corners || [];
+
+    // Corner table — flag if axis-aligned (bug indicator)
+    const isAxisAligned = corners.length === 4 &&
+      Math.abs(corners[0][1] - corners[1][1]) < 5 &&
+      Math.abs(corners[2][1] - corners[3][1]) < 5;
+
+    cornerRow.innerHTML = corners.map((pt, i) =>
+=======
     cornerRow.innerHTML = (data.corners || []).map((pt, i) =>
+>>>>>>> main
       `<div class="corner-item">
         <span class="corner-label">${labels[i]}</span>
         <span> [${pt[0]}, ${pt[1]}]</span>
       </div>`
+<<<<<<< fix/corner-detection-bugs
+    ).join('') + (isAxisAligned
+      ? `<div style="color:var(--red);margin-top:4px;width:100%;">
+           ⚠ Corners look axis-aligned — may be a bounding box, not true quad.
+         </div>`
+      : '');
+=======
     ).join('');
+>>>>>>> main
 
     cacheBadge.textContent = data.cached ? 'cache hit' : 'fresh detection';
     cacheBadge.className = `cache-badge ${data.cached ? 'hit' : 'miss'}`;
@@ -474,6 +508,25 @@
       ? `<span style="color:var(--text)">Notes:</span> ${escapeHtml(data.notes)}`
         + (data.confidence ? ` &nbsp;·&nbsp; Confidence: ${escapeHtml(data.confidence)}` : '')
       : '';
+<<<<<<< fix/corner-detection-bugs
+
+    // Resolution info
+    if (data.detection_size && data.composite_size) {
+      const [dw, dh] = data.detection_size;
+      const [cw, ch] = data.composite_size;
+      const match = dw === cw && dh === ch;
+      sizeInfo.innerHTML =
+        `<span style="color:var(--muted)">Detection res:</span> ${dw}×${dh} &nbsp;·&nbsp; `
+        + `<span style="color:var(--muted)">Composite res:</span> ${cw}×${ch}`
+        + (match ? '' : ' <span style="color:var(--red)">⚠ mismatch — corners scaled</span>');
+    }
+
+    // Debug overlay image
+    if (data.debug_image) {
+      debugImg.src = `data:image/png;base64,${data.debug_image}`;
+    }
+=======
+>>>>>>> main
   }
 
   function escapeHtml(s) {

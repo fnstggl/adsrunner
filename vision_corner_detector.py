@@ -59,55 +59,74 @@ def get_image_dimensions(image_path: str) -> tuple[int, int]:
     return w, h
 
 
-def detect_corners_with_vision(image_path: str, debug: bool = False) -> dict:
-    """
-    Uses Claude vision to locate the exact pixel coordinates of the
-    phone screen corners in the image.
+def _build_prompt(w: int, h: int, retry: bool = False) -> str:
+    extra = ""
+    if retry:
+        extra = """
+IMPORTANT — YOUR PREVIOUS ATTEMPT RETURNED AN AXIS-ALIGNED BOUNDING BOX.
+That means all four Y-values on the top edge were equal, and all four Y-values
+on the bottom edge were equal. That is WRONG — it means you described a rectangle
+aligned with the image axes, not the actual tilted phone screen quad.
+You MUST trace each corner individually along the physical bezel edge.
+"""
+    return f"""You are a precision image coordinate extraction system.
+{extra}
+The image shows a smartphone lying on a desk. The phone IS PHYSICALLY TILTED /
+ROTATED on the desk — it is NOT aligned with the image edges. The screen
+displays either a solid green rectangle (chroma key placeholder) or a mobile UI.
 
-    Returns dict with keys: tl, tr, br, bl (each a [x, y] list)
-    """
-    client = anthropic.Anthropic()
-
-    img_data, media_type = encode_image(image_path)
-    w, h = get_image_dimensions(image_path)
-
-    print(f"[VISION] Sending {w}x{h} image to Claude vision API...")
-
-    prompt = f"""You are a precision image coordinate extraction system.
-
-The image shows a smartphone lying on a desk. The phone screen displays either:
-- A solid green rectangle (chroma key green screen placeholder)
-- OR a mobile app interface
-
-Your task: Find the EXACT pixel coordinates of the four corners of the phone SCREEN 
-(not the phone body/bezel — the actual display area inside the bezel).
+Your task: Find the EXACT pixel coordinates of all four corners of the phone
+SCREEN (the display area inside the bezel, NOT the phone body outline).
 
 The image dimensions are {w} x {h} pixels.
 
-Return ONLY a JSON object with this exact structure, no other text:
+CRITICAL — HOW TO FIND EACH CORNER CORRECTLY:
+1. Locate the TOP-LEFT corner: trace the LEFT bezel edge upward until it meets
+   the TOP bezel edge. That intersection pixel is TL.
+2. Locate the TOP-RIGHT corner: trace the RIGHT bezel edge upward until it meets
+   the TOP bezel edge. That intersection pixel is TR.
+3. Locate the BOTTOM-RIGHT corner: trace the RIGHT bezel edge downward until it
+   meets the BOTTOM bezel edge. That is BR.
+4. Locate the BOTTOM-LEFT corner: trace the LEFT bezel edge downward until it
+   meets the BOTTOM bezel edge. That is BL.
+
+BECAUSE THE PHONE IS TILTED:
+- TL and TR will have DIFFERENT y-coordinates (top edge is a diagonal line)
+- BL and BR will have DIFFERENT y-coordinates (bottom edge is also diagonal)
+- TL and BL will have DIFFERENT x-coordinates (left edge is diagonal)
+- TR and BR will have DIFFERENT x-coordinates (right edge is diagonal)
+
+SELF-CHECK BEFORE RESPONDING:
+Look at your four corners. If tl[1] ≈ tr[1] AND bl[1] ≈ br[1] (top Y values
+are almost equal AND bottom Y values are almost equal), you have detected an
+axis-aligned bounding box — NOT the actual corners. Go back and re-examine the
+physical bezel edges carefully, then correct your answer.
+
+The screen has rounded corners — pick the point where the corner curve meets the
+straight bezel edges, not the extreme rounded tip.
+
+Return ONLY a JSON object, no other text:
 {{
   "tl": [x, y],
-  "tr": [x, y], 
+  "tr": [x, y],
   "br": [x, y],
   "bl": [x, y],
   "confidence": "high|medium|low",
-  "notes": "brief description of what you found"
-}}
+  "notes": "brief description of what you found and the tilt angle you observed"
+}}"""
 
-Where:
-- tl = top-left corner of the screen
-- tr = top-right corner of the screen  
-- br = bottom-right corner of the screen
-- bl = bottom-left corner of the screen
-- All coordinates are in pixels from the top-left of the image (0,0)
 
-Be as precise as possible. The screen has rounded corners — pick the point where 
-the corner curve meets the straight edges, not the extreme rounded point.
-Look carefully at the bezel boundary to find the exact inner edge of the screen."""
+def _is_axis_aligned(tl, tr, br, bl, threshold: int = 5) -> bool:
+    """Return True if corners look like an axis-aligned bounding box."""
+    top_y_diff = abs(tl[1] - tr[1])
+    bot_y_diff = abs(bl[1] - br[1])
+    return top_y_diff < threshold and bot_y_diff < threshold
 
+
+def _call_vision_api(client, img_data: str, media_type: str, prompt: str) -> dict:
     response = client.messages.create(
         model="claude-sonnet-4-20250514",
-        max_tokens=500,
+        max_tokens=600,
         messages=[{
             "role": "user",
             "content": [
@@ -119,35 +138,61 @@ Look carefully at the bezel boundary to find the exact inner edge of the screen.
                         "data": img_data,
                     }
                 },
-                {
-                    "type": "text",
-                    "text": prompt
-                }
+                {"type": "text", "text": prompt}
             ]
         }]
     )
-
     raw = response.content[0].text.strip()
     print(f"[VISION] Raw response: {raw}")
-
-    # Parse JSON from response
-    # Handle case where model wraps in ```json ... ```
     json_match = re.search(r'\{.*\}', raw, re.DOTALL)
     if not json_match:
-        sys.exit(f"[ERROR] Could not parse JSON from vision response: {raw}")
+        raise ValueError(f"Could not parse JSON from vision response: {raw}")
+    return json.loads(json_match.group())
 
-    corners_data = json.loads(json_match.group())
 
+def detect_corners_with_vision(image_path: str, debug: bool = False) -> dict:
+    """
+    Uses Claude vision to locate the exact pixel coordinates of the
+    phone screen corners in the image. Retries once with a stronger prompt
+    if the result looks like an axis-aligned bounding box.
+
+    Returns dict with keys: corners, image_size, confidence, notes, method
+    """
+    client = anthropic.Anthropic()
+
+    img_data, media_type = encode_image(image_path)
+    w, h = get_image_dimensions(image_path)
+
+    print(f"[VISION] Sending {w}x{h} image to Claude vision API...")
+
+    # ── First attempt ────────────────────────────────────────────────────────
+    corners_data = _call_vision_api(client, img_data, media_type,
+                                    _build_prompt(w, h, retry=False))
     tl = corners_data['tl']
     tr = corners_data['tr']
     br = corners_data['br']
     bl = corners_data['bl']
 
+    # ── Validate: reject axis-aligned bounding boxes ─────────────────────────
+    if _is_axis_aligned(tl, tr, br, bl):
+        print(f"[VISION] WARNING: result looks axis-aligned "
+              f"(top Δy={abs(tl[1]-tr[1])}, bot Δy={abs(bl[1]-br[1])}). "
+              f"Retrying with stronger prompt...")
+        corners_data = _call_vision_api(client, img_data, media_type,
+                                        _build_prompt(w, h, retry=True))
+        tl = corners_data['tl']
+        tr = corners_data['tr']
+        br = corners_data['br']
+        bl = corners_data['bl']
+
+        if _is_axis_aligned(tl, tr, br, bl):
+            print(f"[VISION] WARNING: retry also returned axis-aligned result — "
+                  f"proceeding but composite may be incorrect.")
+
     print(f"\n[VISION] Detected corners:")
-    print(f"  TL: {tl}")
-    print(f"  TR: {tr}")
-    print(f"  BR: {br}")
-    print(f"  BL: {bl}")
+    print(f"  TL: {tl}  TR: {tr}")
+    print(f"  BL: {bl}  BR: {br}")
+    print(f"  Top Δy: {abs(tl[1]-tr[1])}px  Bot Δy: {abs(bl[1]-br[1])}px")
     print(f"  Confidence: {corners_data.get('confidence', 'unknown')}")
     print(f"  Notes: {corners_data.get('notes', '')}")
 
