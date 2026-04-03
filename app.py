@@ -47,67 +47,83 @@ def do_composite():
     if not scene_bytes or not ui_bytes:
         return jsonify({"error": "One or both uploaded files are empty."}), 400
 
-    # ── Corner detection (cached per scene image) ────────────────────────────
-    scene_hash = hashlib.sha256(scene_bytes).hexdigest()
-    cache_path = CACHE_DIR / f"{scene_hash}.json"
-
-    cached = cache_path.exists()
-
-    if cached:
-        try:
-            with open(cache_path) as f:
-                corners_data = json.load(f)
-        except (json.JSONDecodeError, OSError) as exc:
-            cached = False  # corrupt cache — re-detect
-            corners_data = None
-
-    if not cached:
-        # Write scene to a temp file so vision_corner_detector can read it
-        suffix = Path(scene_file.filename or "scene.png").suffix or ".png"
-        with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tf:
-            tf.write(scene_bytes)
-            scene_tmp = tf.name
-
-        try:
-            corners_data = vcd.detect_corners_with_vision(scene_tmp)
-        except Exception as exc:
-            os.unlink(scene_tmp)
-            return jsonify({"error": f"Vision API error: {exc}"}), 502
-        finally:
-            try:
-                os.unlink(scene_tmp)
-            except OSError:
-                pass
-
-        # Persist to cache
-        with open(cache_path, "w") as f:
-            json.dump(corners_data, f, indent=2)
-
-    # ── Load images ──────────────────────────────────────────────────────────
+    # ── Decode images first so we can run CV detection ───────────────────────
     scene_arr = cv2.imdecode(np.frombuffer(scene_bytes, np.uint8), cv2.IMREAD_COLOR)
-    ui_arr = cv2.imdecode(np.frombuffer(ui_bytes, np.uint8), cv2.IMREAD_COLOR)
+    ui_arr    = cv2.imdecode(np.frombuffer(ui_bytes,    np.uint8), cv2.IMREAD_COLOR)
 
     if scene_arr is None:
         return jsonify({"error": "Could not decode the scene image."}), 400
     if ui_arr is None:
         return jsonify({"error": "Could not decode the UI image."}), 400
 
-    # ── Dimension sanity check ───────────────────────────────────────────────
-    # Corners were detected on the full-resolution original; verify the scene
-    # uploaded now is the same resolution so coordinates are in the right space.
     sh, sw = scene_arr.shape[:2]
-    stored_w, stored_h = corners_data.get("image_size", [sw, sh])
-    if sw != stored_w or sh != stored_h:
-        print(f"[WARN] Dimension mismatch: detection was on {stored_w}x{stored_h}, "
-              f"composite scene is {sw}x{sh}. Scaling corners.")
-        sx = sw / stored_w
-        sy = sh / stored_h
-        corners_data["corners"] = [
-            [int(pt[0] * sx), int(pt[1] * sy)]
-            for pt in corners_data["corners"]
-        ]
 
-    corners = np.array(corners_data["corners"], dtype=np.float32)
+    # ── PRIMARY: CV-based green screen detection (pixel-perfect, free) ────────
+    # This works because the green screen placeholder is a solid saturated green
+    # rectangle — HSV chroma detection gives exact corners without any API call.
+    cv_corners, blend_mask = compositor.detect_green_corners(scene_arr)
+
+    if cv_corners is not None:
+        corners = cv_corners
+        corners_data = {
+            "corners": cv_corners.tolist(),
+            "image_size": [sw, sh],
+            "confidence": "high",
+            "notes": "Detected via HSV chroma key analysis (pixel-perfect)",
+            "method": "cv_green",
+        }
+        cached = False
+        detection_method = "cv_green"
+        print(f"[DETECT] Using CV green-screen detection")
+    else:
+        # ── FALLBACK: Vision API (for scenes without a visible green screen) ──
+        blend_mask = None
+        detection_method = "vision_llm"
+        scene_hash = hashlib.sha256(scene_bytes).hexdigest()
+        cache_path = CACHE_DIR / f"{scene_hash}.json"
+        cached = cache_path.exists()
+
+        if cached:
+            try:
+                with open(cache_path) as f:
+                    corners_data = json.load(f)
+            except (json.JSONDecodeError, OSError):
+                cached = False
+                corners_data = None
+
+        if not cached:
+            suffix = Path(scene_file.filename or "scene.png").suffix or ".png"
+            with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tf:
+                tf.write(scene_bytes)
+                scene_tmp = tf.name
+
+            try:
+                corners_data = vcd.detect_corners_with_vision(scene_tmp)
+            except Exception as exc:
+                os.unlink(scene_tmp)
+                return jsonify({"error": f"Vision API error: {exc}"}), 502
+            finally:
+                try:
+                    os.unlink(scene_tmp)
+                except OSError:
+                    pass
+
+            with open(cache_path, "w") as f:
+                json.dump(corners_data, f, indent=2)
+
+        # Scale corners if scene dimensions changed since detection
+        stored_w, stored_h = corners_data.get("image_size", [sw, sh])
+        if sw != stored_w or sh != stored_h:
+            print(f"[WARN] Dimension mismatch: detection={stored_w}x{stored_h}, "
+                  f"composite={sw}x{sh}. Scaling corners.")
+            sx, sy = sw / stored_w, sh / stored_h
+            corners_data["corners"] = [
+                [pt[0] * sx, pt[1] * sy] for pt in corners_data["corners"]
+            ]
+            corners_data["image_size"] = [sw, sh]
+
+        corners = np.array(corners_data["corners"], dtype=np.float32)
+        print(f"[DETECT] Using Vision API detection (cached={cached})")
 
     # ── Debug quad: draw detected polygon on scene copy ──────────────────────
     debug_arr = scene_arr.copy()
@@ -120,7 +136,8 @@ def do_composite():
 
     # ── Composite ────────────────────────────────────────────────────────────
     try:
-        result = compositor.composite(scene_arr, ui_arr, corners)
+        result = compositor.composite(scene_arr, ui_arr, corners,
+                                      blend_mask=blend_mask)
     except Exception as exc:
         return jsonify({"error": f"Compositor error: {exc}"}), 500
 
@@ -133,6 +150,7 @@ def do_composite():
             raise RuntimeError("cv2.imencode failed")
         return base64.b64encode(buf.tobytes()).decode()
 
+    stored_w, stored_h = corners_data.get("image_size", [sw, sh])
     return jsonify(
         {
             "image": _encode_png(result),
@@ -143,6 +161,7 @@ def do_composite():
             "confidence": corners_data.get("confidence", "unknown"),
             "notes": corners_data.get("notes", ""),
             "cached": cached,
+            "detection_method": detection_method,
         }
     )
 

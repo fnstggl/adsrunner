@@ -65,45 +65,40 @@ def _build_prompt(w: int, h: int, retry: bool = False) -> str:
         extra = """
 IMPORTANT — YOUR PREVIOUS ATTEMPT RETURNED AN AXIS-ALIGNED BOUNDING BOX.
 That means all four Y-values on the top edge were equal, and all four Y-values
-on the bottom edge were equal. That is WRONG — it means you described a rectangle
-aligned with the image axes, not the actual tilted phone screen quad.
-You MUST trace each corner individually along the physical bezel edge.
+on the bottom edge were equal. That is WRONG unless the phone is perfectly
+upright — check the actual tilt and trace each bezel edge individually.
 """
     return f"""You are a precision image coordinate extraction system.
 {extra}
-The image shows a smartphone lying on a desk. The phone IS PHYSICALLY TILTED /
-ROTATED on the desk — it is NOT aligned with the image edges. The screen
-displays either a solid green rectangle (chroma key placeholder) or a mobile UI.
+The image shows a smartphone. The phone screen may be upright (aligned with
+image axes) or tilted/rotated at an angle — examine the image carefully.
+The screen displays either a solid green or colored rectangle (chroma key
+placeholder) or a mobile UI.
 
-Your task: Find the EXACT pixel coordinates of all four corners of the phone
-SCREEN (the display area inside the bezel, NOT the phone body outline).
+Your task: Find the EXACT pixel coordinates of the four corners of the phone
+SCREEN — meaning the active display area inside the bezel, NOT the phone body.
 
 The image dimensions are {w} x {h} pixels.
 
-CRITICAL — HOW TO FIND EACH CORNER CORRECTLY:
-1. Locate the TOP-LEFT corner: trace the LEFT bezel edge upward until it meets
-   the TOP bezel edge. That intersection pixel is TL.
-2. Locate the TOP-RIGHT corner: trace the RIGHT bezel edge upward until it meets
-   the TOP bezel edge. That intersection pixel is TR.
-3. Locate the BOTTOM-RIGHT corner: trace the RIGHT bezel edge downward until it
-   meets the BOTTOM bezel edge. That is BR.
-4. Locate the BOTTOM-LEFT corner: trace the LEFT bezel edge downward until it
-   meets the BOTTOM bezel edge. That is BL.
+STEP-BY-STEP:
+1. Identify the phone screen region (bright/colored display area).
+2. Locate where the LEFT bezel edge meets the TOP bezel edge → TL corner.
+3. Locate where the RIGHT bezel edge meets the TOP bezel edge → TR corner.
+4. Locate where the RIGHT bezel edge meets the BOTTOM bezel edge → BR corner.
+5. Locate where the LEFT bezel edge meets the BOTTOM bezel edge → BL corner.
 
-BECAUSE THE PHONE IS TILTED:
-- TL and TR will have DIFFERENT y-coordinates (top edge is a diagonal line)
-- BL and BR will have DIFFERENT y-coordinates (bottom edge is also diagonal)
-- TL and BL will have DIFFERENT x-coordinates (left edge is diagonal)
-- TR and BR will have DIFFERENT x-coordinates (right edge is diagonal)
+TILT RULES (observe the actual phone angle, do not assume):
+- If the phone is tilted, TL/TR will have different y-values and BL/BR will
+  have different y-values — all four corners form a non-rectangular quad.
+- If the phone is upright, TL/TR share the same y-value and BL/BR share
+  the same y-value — that is correct and expected for an upright phone.
 
-SELF-CHECK BEFORE RESPONDING:
-Look at your four corners. If tl[1] ≈ tr[1] AND bl[1] ≈ br[1] (top Y values
-are almost equal AND bottom Y values are almost equal), you have detected an
-axis-aligned bounding box — NOT the actual corners. Go back and re-examine the
-physical bezel edges carefully, then correct your answer.
-
-The screen has rounded corners — pick the point where the corner curve meets the
-straight bezel edges, not the extreme rounded tip.
+IMPORTANT — avoid these errors:
+- Do NOT return the phone body outline corners; use the inner screen edge.
+- Do NOT include the bezel itself in the screen area.
+- For rounded screen corners, pick where the straight bezel edges would
+  intersect, not the extreme tip of the rounded corner.
+- Report coordinates in pixels counted from the TOP-LEFT of the image.
 
 Return ONLY a JSON object, no other text:
 {{
@@ -112,7 +107,7 @@ Return ONLY a JSON object, no other text:
   "br": [x, y],
   "bl": [x, y],
   "confidence": "high|medium|low",
-  "notes": "brief description of what you found and the tilt angle you observed"
+  "notes": "describe phone orientation and how confident you are in each corner"
 }}"""
 
 

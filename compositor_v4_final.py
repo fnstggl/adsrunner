@@ -131,14 +131,100 @@ def load_corners(corners_path: str) -> np.ndarray:
     return corners
 
 
+def _sort_corners(pts: np.ndarray) -> np.ndarray:
+    """Sort 4 corner points into [TL, TR, BR, BL] order."""
+    pts = pts.reshape(4, 2).astype(np.float32)
+    s = pts[:, 0] + pts[:, 1]
+    d = pts[:, 0] - pts[:, 1]
+    return np.array([
+        pts[np.argmin(s)],   # TL: smallest x+y
+        pts[np.argmax(d)],   # TR: largest x-y
+        pts[np.argmax(s)],   # BR: largest x+y
+        pts[np.argmin(d)],   # BL: smallest x-y
+    ], dtype=np.float32)
+
+
+def detect_green_corners(scene: np.ndarray) -> tuple:
+    """
+    Detect green screen corners via HSV chroma key analysis.
+
+    This is the primary detection method — pixel-perfect, free, and instant.
+    Works because the green screen placeholder is a solid saturated green
+    rectangle that stands out clearly in HSV space.
+
+    Returns (corners [TL,TR,BR,BL] as float32 (4,2), blend_mask uint8 HxW)
+    or (None, None) if no adequate green region is found.
+    """
+    hsv = cv2.cvtColor(scene, cv2.COLOR_BGR2HSV)
+
+    # Broad green range to handle lighting and white-balance variations.
+    # OpenCV hue is 0-179 (half of 0-360°). Pure chroma-key green ≈ H 60-80.
+    lower = np.array([35, 40, 40], dtype=np.uint8)
+    upper = np.array([90, 255, 255], dtype=np.uint8)
+    raw_mask = cv2.inRange(hsv, lower, upper)
+
+    # Morphological cleanup: fill holes caused by specular highlights,
+    # then remove tiny stray blobs.
+    k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (9, 9))
+    cleaned = cv2.morphologyEx(raw_mask, cv2.MORPH_CLOSE, k)
+    cleaned = cv2.morphologyEx(cleaned, cv2.MORPH_OPEN, k)
+
+    contours, _ = cv2.findContours(cleaned, cv2.RETR_EXTERNAL,
+                                   cv2.CHAIN_APPROX_SIMPLE)
+    if not contours:
+        return None, None
+
+    # Require the region to be at least 0.5 % of image area (filters noise).
+    largest = max(contours, key=cv2.contourArea)
+    min_area = scene.shape[0] * scene.shape[1] * 0.005
+    if cv2.contourArea(largest) < min_area:
+        return None, None
+
+    # Convex hull → approximate quadrilateral
+    hull = cv2.convexHull(largest)
+    epsilon = 0.02 * cv2.arcLength(hull, True)
+    approx = cv2.approxPolyDP(hull, epsilon, True)
+
+    if len(approx) == 4:
+        pts = approx.reshape(4, 2).astype(np.float32)
+    else:
+        # More or fewer than 4 vertices — pick the 4 extreme-sum/diff points
+        # from the convex hull directly.
+        h_pts = hull.reshape(-1, 2).astype(np.float32)
+        s = h_pts[:, 0] + h_pts[:, 1]
+        d = h_pts[:, 0] - h_pts[:, 1]
+        pts = h_pts[[np.argmin(s), np.argmax(d), np.argmax(s), np.argmin(d)]]
+
+    corners = _sort_corners(pts)
+
+    # Build blend mask as filled convex polygon of the detected screen quad.
+    # Using the polygon (not the raw HSV mask) avoids holes from screen glare
+    # while staying exactly within the screen boundary.
+    blend_mask = np.zeros(scene.shape[:2], dtype=np.uint8)
+    cv2.fillConvexPoly(blend_mask, corners.astype(np.int32), 255)
+
+    print(f"[CV] Green screen detected — area={cv2.contourArea(largest):.0f}px²")
+    print(f"     TL:{corners[0].astype(int)}  TR:{corners[1].astype(int)}")
+    print(f"     BR:{corners[2].astype(int)}  BL:{corners[3].astype(int)}")
+
+    return corners, blend_mask
+
+
 def composite(scene: np.ndarray, ui: np.ndarray,
-              corners: np.ndarray, feather: int = 3) -> np.ndarray:
+              corners: np.ndarray, feather: int = 3,
+              blend_mask: np.ndarray = None) -> np.ndarray:
     """
     THE CORE — exactly how Placeit works:
     1. corners define the destination quad in scene space
     2. getPerspectiveTransform maps flat UI → that quad
-    3. fillConvexPoly makes a clean mask for the exact screen shape
+    3. Mask selects the exact screen pixels (chroma mask if available,
+       otherwise convex polygon from corners)
     4. Blend with soft edge
+
+    Parameters
+    ----------
+    blend_mask : optional pre-computed mask (e.g. from detect_green_corners).
+                 If None, a convex polygon from corners is used instead.
     """
     sh, sw = scene.shape[:2]
     uh, uw = ui.shape[:2]
@@ -151,8 +237,7 @@ def composite(scene: np.ndarray, ui: np.ndarray,
         [0,    uh-1],
     ], dtype=np.float32)
 
-    # Destination corners (the phone screen in scene space)
-    # Order: TL, TR, BR, BL
+    # Destination corners (the phone screen in scene space) — TL, TR, BR, BL
     dst = corners
 
     # Compute perspective transform and warp UI into scene space
@@ -164,12 +249,16 @@ def composite(scene: np.ndarray, ui: np.ndarray,
         borderValue=(0, 0, 0)
     )
 
-    # Build a hard mask from the exact screen quad
-    mask_hard = np.zeros((sh, sw), dtype=np.uint8)
-    quad = corners.astype(np.int32)
-    cv2.fillConvexPoly(mask_hard, quad, 255)
+    # Build blend mask
+    if blend_mask is not None:
+        # Use the provided mask (e.g. from chroma key detection) — pixel-perfect
+        mask_hard = blend_mask
+    else:
+        # Fall back to convex polygon from detected corners
+        mask_hard = np.zeros((sh, sw), dtype=np.uint8)
+        cv2.fillConvexPoly(mask_hard, corners.astype(np.int32), 255)
 
-    # Optionally feather edges for sub-pixel softness
+    # Feather edges for sub-pixel softness
     if feather > 0:
         mask_f = mask_hard.astype(np.float32) / 255.0
         br = feather * 2 + 1
