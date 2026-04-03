@@ -371,6 +371,26 @@ def detect_green_corners(scene: np.ndarray) -> tuple:
     # Result: < 1px corner error (same technique as calibration board detection).
     corners = _refine_quad_by_line_fitting(cleaned, corners)
 
+    # ── Sub-pixel corner refinement via scene intensity gradients ─────────────
+    # After line-fitting, apply cornerSubPix on the actual scene's grayscale to
+    # further refine using the real edge contrast at the screen boundary.
+    # This is especially important at extreme viewing angles where the green mask
+    # boundary is less sharp due to colour-shift and JPEG compression artifacts.
+    try:
+        gray = cv2.cvtColor(scene, cv2.COLOR_BGR2GRAY)
+        init_pts = corners.reshape(-1, 1, 2).astype(np.float32)
+        criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 30, 0.001)
+        refined_pts = cv2.cornerSubPix(gray, init_pts, (11, 11), (-1, -1), criteria)
+        refined = refined_pts.reshape(4, 2)
+        shift = float(np.abs(refined - corners).max())
+        if shift <= 10:   # sanity: ignore if cornerSubPix wanders more than 10px
+            print(f"[CV] cornerSubPix: max shift {shift:.2f}px")
+            corners = refined
+        else:
+            print(f"[CV] cornerSubPix shift={shift:.1f}px > limit, skipping")
+    except Exception as e:
+        print(f"[CV] cornerSubPix skipped: {e}")
+
     # ── Blend mask: use the actual green pixel mask (pixel-perfect) ──────────
     # WHY: fillConvexPoly only fills the convex quad from detected corners, which
     # can miss green pixels that are slightly outside the quad — e.g. the sliver
@@ -395,14 +415,16 @@ def composite(scene: np.ndarray, ui: np.ndarray,
     THE CORE — exactly how Placeit works:
     1. corners define the destination quad in scene space
     2. getPerspectiveTransform maps flat UI → that quad
-    3. Mask selects the exact screen pixels (chroma mask if available,
-       otherwise convex polygon from corners)
+    3. Mask is derived from the warp transform itself (perfect alignment)
+       and optionally intersected with blend_mask for occlusion handling
     4. Blend with soft edge
 
     Parameters
     ----------
-    blend_mask : optional pre-computed mask (e.g. from detect_green_corners).
-                 If None, a convex polygon from corners is used instead.
+    blend_mask : optional occlusion guard mask (e.g. from detect_green_corners).
+                 Intersected with the warp-coverage mask so that thumbs, bezels,
+                 or any non-green area that happens to overlap the corner quad
+                 are not painted over.  If None, only the warp coverage is used.
     """
     sh, sw = scene.shape[:2]
     uh, uw = ui.shape[:2]
@@ -431,14 +453,32 @@ def composite(scene: np.ndarray, ui: np.ndarray,
         borderMode=cv2.BORDER_REPLICATE,
     )
 
-    # Build blend mask
+    # Build blend mask — derived from the warp transform itself for guaranteed
+    # mask-warp alignment.  By warping a solid white rectangle with the same M
+    # used for the UI, the mask IS the warp coverage: every pixel set to 255 in
+    # the mask is exactly a pixel that received warped UI content, and vice versa.
+    #
+    # WHY THIS IS BETTER THAN USING THE RAW GREEN MASK:
+    # The green pixel mask is computed independently from the corner detection,
+    # so at extreme viewing angles (phone lying flat, steep perspective) the two
+    # can diverge by several pixels — amplified by the severe transform — causing
+    # visible edge artefacts and tilt-proportion mismatches.  Using the warp
+    # coverage eliminates this class of error entirely.
+    #
+    # Occlusion handling is preserved by intersecting with the green mask (if
+    # provided): a thumb or bezel that occluded the green screen won't be green,
+    # so it stays at alpha=0 through the AND operation.
+    ui_white = np.ones((uh, uw), dtype=np.uint8) * 255
+    mask_hard = cv2.warpPerspective(
+        ui_white, M, (sw, sh),
+        flags=cv2.INTER_LINEAR,
+        borderMode=cv2.BORDER_CONSTANT,
+        borderValue=0,
+    )
     if blend_mask is not None:
-        # Use the provided mask (e.g. from chroma key detection) — pixel-perfect
-        mask_hard = blend_mask
-    else:
-        # Fall back to convex polygon from detected corners
-        mask_hard = np.zeros((sh, sw), dtype=np.uint8)
-        cv2.fillConvexPoly(mask_hard, corners.astype(np.int32), 255)
+        # Intersect: show UI only where warp coverage AND green mask both agree.
+        # The green mask acts as an occlusion guard (thumb, bezel, etc.).
+        mask_hard = cv2.bitwise_and(mask_hard, blend_mask)
 
     # Feather edges for sub-pixel softness
     if feather > 0:
