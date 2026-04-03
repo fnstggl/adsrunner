@@ -1,523 +1,491 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Green TEST Screen Compositor *test*</title>
-  <style>
-    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-
-    :root {
-      --bg:       #0f1117;
-      --surface:  #1a1d27;
-      --border:   #2e3245;
-      --accent:   #5b6ef5;
-      --accent-h: #7b8bff;
-      --text:     #e2e4ef;
-      --muted:    #6b7094;
-      --green:    #2dd4a0;
-      --red:      #f05e72;
-      --radius:   12px;
-    }
-
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      background: var(--bg);
-      color: var(--text);
-      min-height: 100vh;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      padding: 40px 20px 80px;
-    }
-
-    h1 {
-      font-size: 1.5rem;
-      font-weight: 600;
-      letter-spacing: -0.02em;
-      margin-bottom: 6px;
-    }
-
-    .subtitle {
-      color: var(--muted);
-      font-size: 0.85rem;
-      margin-bottom: 40px;
-    }
-
-    .upload-row {
-      display: flex;
-      gap: 20px;
-      width: 100%;
-      max-width: 860px;
-      margin-bottom: 24px;
-    }
-
-    .drop-zone {
-      flex: 1;
-      border: 2px dashed var(--border);
-      border-radius: var(--radius);
-      background: var(--surface);
-      padding: 28px 20px;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      gap: 10px;
-      cursor: pointer;
-      transition: border-color 0.15s, background 0.15s;
-      position: relative;
-      min-height: 200px;
-      justify-content: center;
-    }
-
-    .drop-zone:hover, .drop-zone.drag-over {
-      border-color: var(--accent);
-      background: #1e2135;
-    }
-
-    .drop-zone.has-file {
-      border-color: var(--green);
-      border-style: solid;
-    }
-
-    .drop-zone input[type="file"] {
-      position: absolute;
-      inset: 0;
-      opacity: 0;
-      cursor: pointer;
-      width: 100%;
-      height: 100%;
-    }
-
-    .drop-icon {
-      font-size: 2rem;
-      line-height: 1;
-    }
-
-    .drop-label {
-      font-weight: 600;
-      font-size: 0.95rem;
-    }
-
-    .drop-hint {
-      color: var(--muted);
-      font-size: 0.78rem;
-      text-align: center;
-    }
-
-    .drop-preview {
-      width: 100%;
-      max-height: 160px;
-      object-fit: contain;
-      border-radius: 6px;
-      display: none;
-    }
-
-    .drop-zone.has-file .drop-preview { display: block; }
-    .drop-zone.has-file .drop-icon,
-    .drop-zone.has-file .drop-hint { display: none; }
-    .drop-zone.has-file .drop-label { font-size: 0.78rem; color: var(--green); }
-
-    .btn-composite {
-      display: block;
-      width: 100%;
-      max-width: 860px;
-      padding: 14px;
-      background: var(--accent);
-      color: #fff;
-      border: none;
-      border-radius: var(--radius);
-      font-size: 1rem;
-      font-weight: 600;
-      cursor: pointer;
-      transition: background 0.15s, opacity 0.15s;
-      position: relative;
-    }
-
-    .btn-composite:hover { background: var(--accent-h); }
-    .btn-composite:disabled { opacity: 0.5; cursor: not-allowed; }
-
-    /* ── Loading ── */
-    .loading-bar {
-      display: none;
-      width: 100%;
-      max-width: 860px;
-      height: 3px;
-      background: var(--border);
-      border-radius: 99px;
-      margin-top: 12px;
-      overflow: hidden;
-    }
-
-    .loading-bar.active { display: block; }
-
-    .loading-fill {
-      height: 100%;
-      width: 0%;
-      background: linear-gradient(90deg, var(--accent), var(--green));
-      border-radius: 99px;
-      animation: progress 4s ease-in-out forwards;
-    }
-
-    @keyframes progress {
-      0%   { width: 0%; }
-      60%  { width: 75%; }
-      90%  { width: 90%; }
-      100% { width: 95%; }
-    }
-
-    .status-text {
-      color: var(--muted);
-      font-size: 0.82rem;
-      margin-top: 8px;
-      min-height: 18px;
-      text-align: center;
-      width: 100%;
-      max-width: 860px;
-    }
-
-    /* ── Error ── */
-    .error-box {
-      display: none;
-      width: 100%;
-      max-width: 860px;
-      background: rgba(240, 94, 114, 0.12);
-      border: 1px solid rgba(240, 94, 114, 0.4);
-      border-radius: var(--radius);
-      padding: 14px 18px;
-      color: var(--red);
-      font-size: 0.88rem;
-      margin-top: 16px;
-    }
-
-    /* ── Result ── */
-    .result-section {
-      display: none;
-      flex-direction: column;
-      align-items: center;
-      gap: 16px;
-      width: 100%;
-      max-width: 860px;
-      margin-top: 32px;
-    }
-
-    .result-section.visible { display: flex; }
-
-    .result-title {
-      font-weight: 600;
-      font-size: 1rem;
-      align-self: flex-start;
-    }
-
-    .result-img {
-      width: 100%;
-      border-radius: var(--radius);
-      border: 1px solid var(--border);
-    }
-
-    .result-actions {
-      display: flex;
-      gap: 12px;
-      align-self: flex-start;
-    }
-
-    .btn-download {
-      padding: 9px 22px;
-      background: var(--green);
-      color: #0f1117;
-      border: none;
-      border-radius: 8px;
-      font-size: 0.88rem;
-      font-weight: 700;
-      cursor: pointer;
-      text-decoration: none;
-      display: inline-block;
-    }
-
-    /* ── Debug overlay ── */
-    .debug-panel {
-      width: 100%;
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: var(--radius);
-      padding: 14px 18px;
-      font-family: "SF Mono", "Fira Code", monospace;
-      font-size: 0.78rem;
-      color: var(--muted);
-      line-height: 1.7;
-    }
-
-    .debug-panel .debug-header {
-      color: var(--text);
-      font-weight: 600;
-      margin-bottom: 6px;
-      font-family: inherit;
-    }
-
-    .debug-panel .corner-row {
-      display: flex;
-      gap: 24px;
-      flex-wrap: wrap;
-    }
-
-    .debug-panel .corner-item { min-width: 120px; }
-    .debug-panel .corner-label { color: var(--accent-h); }
-    .debug-panel .cache-badge {
-      display: inline-block;
-      padding: 2px 8px;
-      border-radius: 99px;
-      font-size: 0.7rem;
-      font-weight: 600;
-      margin-left: 8px;
-    }
-    .cache-badge.hit  { background: rgba(45,212,160,0.15); color: var(--green); }
-    .cache-badge.miss { background: rgba(91,110,245,0.15); color: var(--accent-h); }
-
-    @media (max-width: 600px) {
-      .upload-row { flex-direction: column; }
-    }
-  </style>
-</head>
-<body>
-
-<h1>Green TEST Screen Compositor2</h1>
-<p class="subtitle">Upload a greenscreen phone scene + UI screenshot to composite them together.</p>
-
-<div class="upload-row">
-  <!-- Zone 1: Scene -->
-  <div class="drop-zone" id="zone-scene" role="button" aria-label="Upload greenscreen scene">
-    <input type="file" id="input-scene" accept="image/*" />
-    <span class="drop-icon">📷</span>
-    <span class="drop-label">Greenscreen Scene</span>
-    <span class="drop-hint">Drag & drop or click<br>JPG / PNG / WEBP — max 20 MB</span>
-    <img class="drop-preview" id="preview-scene" alt="Scene preview" />
-  </div>
-
-  <!-- Zone 2: UI -->
-  <div class="drop-zone" id="zone-ui" role="button" aria-label="Upload UI screenshot">
-    <input type="file" id="input-ui" accept="image/*" />
-    <span class="drop-icon">📱</span>
-    <span class="drop-label">UI Screenshot</span>
-    <span class="drop-hint">Drag & drop or click<br>JPG / PNG / WEBP — max 20 MB</span>
-    <img class="drop-preview" id="preview-ui" alt="UI preview" />
-  </div>
-</div>
-
-<button class="btn-composite" id="btn-composite" disabled>Composite</button>
-
-<div class="loading-bar" id="loading-bar">
-  <div class="loading-fill" id="loading-fill"></div>
-</div>
-<p class="status-text" id="status-text"></p>
-
-<div class="error-box" id="error-box"></div>
-
-<div class="result-section" id="result-section">
-  <p class="result-title">Result</p>
-  <img class="result-img" id="result-img" alt="Composited output" />
-  <div class="result-actions">
-    <a class="btn-download" id="btn-download" download="composited.png">Download PNG</a>
-  </div>
-  <div class="debug-panel" id="debug-panel">
-    <div class="debug-header">Detected corners <span class="cache-badge" id="cache-badge"></span></div>
-    <div class="corner-row" id="corner-row"></div>
-    <div id="debug-notes" style="margin-top:6px;"></div>
-    <div id="size-info" style="margin-top:4px;"></div>
-  </div>
-
-  <details id="debug-quad-wrap" style="width:100%;">
-    <summary style="cursor:pointer;color:var(--muted);font-size:0.82rem;
-                    padding:6px 0;user-select:none;">
-      Corner verification overlay (click to expand)
-    </summary>
-    <img class="result-img" id="debug-img" alt="Detected corners overlaid on scene"
-         style="margin-top:10px;" />
-  </details>
-</div>
-
-<script>
-  const inputScene  = document.getElementById('input-scene');
-  const inputUi     = document.getElementById('input-ui');
-  const zoneScene   = document.getElementById('zone-scene');
-  const zoneUi      = document.getElementById('zone-ui');
-  const previewScene = document.getElementById('preview-scene');
-  const previewUi   = document.getElementById('preview-ui');
-  const btnComposite = document.getElementById('btn-composite');
-  const loadingBar  = document.getElementById('loading-bar');
-  const loadingFill = document.getElementById('loading-fill');
-  const statusText  = document.getElementById('status-text');
-  const errorBox    = document.getElementById('error-box');
-  const resultSection = document.getElementById('result-section');
-  const resultImg   = document.getElementById('result-img');
-  const btnDownload = document.getElementById('btn-download');
-  const debugPanel  = document.getElementById('debug-panel');
-  const cornerRow   = document.getElementById('corner-row');
-  const cacheBadge  = document.getElementById('cache-badge');
-  const debugNotes  = document.getElementById('debug-notes');
-  const sizeInfo    = document.getElementById('size-info');
-  const debugImg    = document.getElementById('debug-img');
-
-  let fileScene = null;
-  let fileUi    = null;
-
-  // ── File helpers ────────────────────────────────────────────────────────
-  function setFile(which, file) {
-    if (!file || !file.type.startsWith('image/')) return;
-    if (which === 'scene') {
-      fileScene = file;
-      showPreview(previewScene, zoneScene, file,
-        `✔ ${truncate(file.name, 22)}`);
-    } else {
-      fileUi = file;
-      showPreview(previewUi, zoneUi, file,
-        `✔ ${truncate(file.name, 22)}`);
-    }
-    updateBtn();
-  }
-
-  function showPreview(imgEl, zone, file, label) {
-    const reader = new FileReader();
-    reader.onload = e => { imgEl.src = e.target.result; };
-    reader.readAsDataURL(file);
-    zone.classList.add('has-file');
-    zone.querySelector('.drop-label').textContent = label;
-  }
-
-  function truncate(str, n) {
-    return str.length > n ? str.slice(0, n - 1) + '…' : str;
-  }
-
-  function updateBtn() {
-    btnComposite.disabled = !(fileScene && fileUi);
-  }
-
-  // ── Input events ────────────────────────────────────────────────────────
-  inputScene.addEventListener('change', () => {
-    if (inputScene.files[0]) setFile('scene', inputScene.files[0]);
-  });
-  inputUi.addEventListener('change', () => {
-    if (inputUi.files[0]) setFile('ui', inputUi.files[0]);
-  });
-
-  // ── Drag & drop ─────────────────────────────────────────────────────────
-  function setupDrop(zone, which) {
-    zone.addEventListener('dragover', e => {
-      e.preventDefault();
-      zone.classList.add('drag-over');
-    });
-    zone.addEventListener('dragleave', () => zone.classList.remove('drag-over'));
-    zone.addEventListener('drop', e => {
-      e.preventDefault();
-      zone.classList.remove('drag-over');
-      const file = e.dataTransfer.files[0];
-      setFile(which, file);
-    });
-  }
-
-  setupDrop(zoneScene, 'scene');
-  setupDrop(zoneUi, 'ui');
-
-  // ── Composite ────────────────────────────────────────────────────────────
-  btnComposite.addEventListener('click', async () => {
-    if (!fileScene || !fileUi) return;
-
-    // Reset UI
-    errorBox.style.display = 'none';
-    resultSection.classList.remove('visible');
-    loadingBar.classList.add('active');
-    // Restart animation
-    loadingFill.style.animation = 'none';
-    void loadingFill.offsetWidth;
-    loadingFill.style.animation = '';
-    btnComposite.disabled = true;
-    statusText.textContent = 'Sending images to Claude Vision API…';
-
-    const form = new FormData();
-    form.append('scene', fileScene);
-    form.append('ui', fileUi);
-
-    try {
-      const res = await fetch('/composite', { method: 'POST', body: form });
-      const data = await res.json();
-
-      loadingBar.classList.remove('active');
-
-      if (!res.ok || data.error) {
-        showError(data.error || `Server error ${res.status}`);
-        return;
-      }
-
-      // Show result
-      statusText.textContent = '';
-      const src = `data:image/png;base64,${data.image}`;
-      resultImg.src = src;
-      btnDownload.href = src;
-      resultSection.classList.add('visible');
-
-      // Debug panel
-      renderDebug(data);
-
-    } catch (err) {
-      loadingBar.classList.remove('active');
-      showError(`Network error: ${err.message}`);
-    } finally {
-      btnComposite.disabled = false;
-    }
-  });
-
-  function showError(msg) {
-    errorBox.textContent = msg;
-    errorBox.style.display = 'block';
-    statusText.textContent = '';
-  }
-
-  function renderDebug(data) {
-    const labels = ['TL', 'TR', 'BR', 'BL'];
-    const corners = data.corners || [];
-
-    // Corner table — flag if axis-aligned (bug indicator)
-    const isAxisAligned = corners.length === 4 &&
-      Math.abs(corners[0][1] - corners[1][1]) < 5 &&
-      Math.abs(corners[2][1] - corners[3][1]) < 5;
-
-    cornerRow.innerHTML = corners.map((pt, i) =>
-      `<div class="corner-item">
-        <span class="corner-label">${labels[i]}</span>
-        <span> [${pt[0]}, ${pt[1]}]</span>
-      </div>`
-    ).join('') + (isAxisAligned
-      ? `<div style="color:var(--red);margin-top:4px;width:100%;">
-           ⚠ Corners look axis-aligned — may be a bounding box, not true quad.
-         </div>`
-      : '');
-
-    cacheBadge.textContent = data.cached ? 'cache hit' : 'fresh detection';
-    cacheBadge.className = `cache-badge ${data.cached ? 'hit' : 'miss'}`;
-
-    debugNotes.innerHTML = data.notes
-      ? `<span style="color:var(--text)">Notes:</span> ${escapeHtml(data.notes)}`
-        + (data.confidence ? ` &nbsp;·&nbsp; Confidence: ${escapeHtml(data.confidence)}` : '')
-      : '';
-
-    // Resolution info
-    if (data.detection_size && data.composite_size) {
-      const [dw, dh] = data.detection_size;
-      const [cw, ch] = data.composite_size;
-      const match = dw === cw && dh === ch;
-      sizeInfo.innerHTML =
-        `<span style="color:var(--muted)">Detection res:</span> ${dw}×${dh} &nbsp;·&nbsp; `
-        + `<span style="color:var(--muted)">Composite res:</span> ${cw}×${ch}`
-        + (match ? '' : ' <span style="color:var(--red)">⚠ mismatch — corners scaled</span>');
-    }
-
-    // Debug overlay image
-    if (data.debug_image) {
-      debugImg.src = `data:image/png;base64,${data.debug_image}`;
-    }
-  }
-
-  function escapeHtml(s) {
-    return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-  }
-</script>
-</body>
-</html>
+"""
+Realer Estate — Compositor v4 Final
+=====================================
+Green screen compositor using:
+1. HSV threshold (S>100) — eliminates background false positives while handling JPEG-compressed/AI-generated greens
+2. extreme_quad_corners() on convex hull — always returns exactly 4 points
+3. RANSAC line fitting — robust to notch outliers, rounded corners, any irregularity
+
+Usage:
+    python compositor_v4_final.py --scene scene.png --ui ui.png --output out.png
+"""
+
+import cv2
+import numpy as np
+import json
+import argparse
+import sys
+from pathlib import Path
+
+
+# ── GLOBALS for interactive corner picking ──────────────────────────────────
+_corners = []
+_window = "Click 4 screen corners: TL → TR → BR → BL  (r=reset, Enter=confirm)"
+
+
+def _mouse_callback(event, x, y, flags, param):
+    global _corners
+    if event == cv2.EVENT_LBUTTONDOWN and len(_corners) < 4:
+        _corners.append([x, y])
+        vis = param["vis"]
+        labels = ["TL", "TR", "BR", "BL"]
+        cv2.circle(vis, (x, y), 8, (0, 255, 0), -1)
+        cv2.putText(vis, labels[len(_corners)-1], (x+10, y-10),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+        if len(_corners) > 1:
+            pts = np.array(_corners, np.int32)
+            cv2.polylines(vis, [pts], len(_corners)==4, (0, 255, 0), 2)
+        cv2.imshow(_window, vis)
+        print(f"  Corner {len(_corners)}: ({x}, {y}) — "
+              f"{['TL','TR','BR','BL'][len(_corners)-1]}")
+
+
+def pick_corners_interactively(scene: np.ndarray, corners_path: str) -> np.ndarray:
+    global _corners
+    _corners = []
+    h, w = scene.shape[:2]
+    scale = min(1.0, 1000 / w)
+    disp_w, disp_h = int(w * scale), int(h * scale)
+    display = cv2.resize(scene, (disp_w, disp_h))
+    vis = display.copy()
+
+    print(f"\n{'─'*60}")
+    print(f"CORNER PICKER")
+    print(f"{'─'*60}")
+    print(f"Click the 4 corners of the PHONE SCREEN in this order:")
+    print(f"  1. TOP-LEFT  2. TOP-RIGHT  3. BOTTOM-RIGHT  4. BOTTOM-LEFT")
+    print(f"Keys: r = reset | Enter = confirm | q = quit")
+    print(f"{'─'*60}\n")
+
+    cv2.namedWindow(_window, cv2.WINDOW_NORMAL)
+    cv2.resizeWindow(_window, disp_w, disp_h)
+    cv2.setMouseCallback(_window, _mouse_callback, {"vis": vis})
+    cv2.imshow(_window, vis)
+
+    while True:
+        key = cv2.waitKey(20) & 0xFF
+        if key == ord('r'):
+            _corners = []
+            vis[:] = display[:]
+            cv2.imshow(_window, vis)
+            print("  [RESET] Click corners again.")
+        elif key in [13, 10] and len(_corners) == 4:
+            break
+        elif key == ord('q'):
+            cv2.destroyAllWindows()
+            sys.exit("Cancelled.")
+
+    cv2.destroyAllWindows()
+    actual_corners = [[int(x / scale), int(y / scale)] for x, y in _corners]
+    with open(corners_path, 'w') as f:
+        json.dump({"corners": actual_corners, "image_size": [w, h]}, f, indent=2)
+    print(f"\n[SAVED] Corners saved to {corners_path}")
+    return np.array(actual_corners, dtype=np.float32)
+
+
+def load_corners(corners_path: str) -> np.ndarray:
+    with open(corners_path) as f:
+        data = json.load(f)
+    corners = np.array(data["corners"], dtype=np.float32)
+    print(f"[CORNERS] Loaded from {corners_path}")
+    for pt, lbl in zip(corners, ['TL','TR','BR','BL']):
+        print(f"  {lbl}: {pt.astype(int)}")
+    return corners
+
+
+# ── GREEN SCREEN DETECTION ───────────────────────────────────────────────────
+
+def get_clean_mask(scene: np.ndarray):
+    """
+    Robust green detection using high-saturation HSV threshold.
+
+    Key: chroma green (#00B140) has S≈235 at source. After JPEG compression
+    or AI generation variation, S can drop to ~100-130. Subway walls and other
+    green-ish backgrounds have S<90. Requiring S>100 catches all real chroma
+    greens while still excluding low-saturation background noise.
+
+    Returns (mask, contour) or (None, None) if no green found.
+    """
+    h, w = scene.shape[:2]
+    hsv = cv2.cvtColor(scene, cv2.COLOR_BGR2HSV)
+
+    # High-saturation green: H in [40,95], S>100, V>60
+    mask = cv2.inRange(hsv, np.array([40, 100, 60]), np.array([95, 255, 255]))
+
+    # Morphological cleanup
+    k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (11, 11))
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, k, iterations=2)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN,  k, iterations=1)
+
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if not contours:
+        return None, None
+
+    # Filter out contours touching image edges (background bleeds to borders)
+    margin = 8
+    valid = []
+    for c in contours:
+        if cv2.contourArea(c) < 500:
+            continue
+        x, y, cw, ch = cv2.boundingRect(c)
+        touches_edge = (x <= margin or y <= margin or
+                        x + cw >= w - margin or y + ch >= h - margin)
+        if not touches_edge:
+            valid.append(c)
+
+    # Fallback: if all contours touch edges, take the largest overall
+    if not valid:
+        valid = [max(contours, key=cv2.contourArea)]
+
+    best = max(valid, key=cv2.contourArea)
+    clean = np.zeros((h, w), dtype=np.uint8)
+    cv2.drawContours(clean, [best], -1, 255, -1)
+
+    area = cv2.contourArea(best)
+    print(f"[MASK] Green region: {area:,.0f} px² "
+          f"({100*area/(w*h):.1f}% of image)")
+
+    return clean, best
+
+
+def extreme_quad_corners(contour: np.ndarray) -> np.ndarray:
+    """
+    Extract 4 true quad corners from convex hull using extreme diagonal projections.
+
+    Works regardless of notches, rounded corners, or how many points
+    approxPolyDP would return. Mathematically guaranteed to return
+    exactly 4 points for any convex shape.
+
+      TL = min(x+y)   BR = max(x+y)
+      TR = max(x-y)   BL = min(x-y)
+    """
+    hull = cv2.convexHull(contour).reshape(-1, 2).astype(np.float32)
+    s = hull[:, 0] + hull[:, 1]
+    d = hull[:, 0] - hull[:, 1]
+    tl = hull[np.argmin(s)]
+    br = hull[np.argmax(s)]
+    tr = hull[np.argmax(d)]
+    bl = hull[np.argmin(d)]
+    return np.array([tl, tr, br, bl], dtype=np.float32)
+
+
+# ── RANSAC LINE FITTING ──────────────────────────────────────────────────────
+
+def fit_line_ransac(pts: np.ndarray, iterations: int = 200,
+                    threshold: float = 2.0):
+    """
+    RANSAC line fit — robust to outliers (notch pixels, rounded corners).
+
+    Unlike cv2.fitLine (SVD, minimises sum of distances including outliers),
+    RANSAC finds the line that the MAJORITY of pixels agree on. Notch pixels
+    and rounded corner pixels become outliers and are ignored.
+
+    Returns (nx, ny, c) for nx*x + ny*y + c = 0, or None.
+    """
+    if len(pts) < 4:
+        return None
+    pts = pts.astype(np.float64)
+    best_line = None
+    best_inliers = 0
+
+    for _ in range(iterations):
+        idx = np.random.choice(len(pts), 2, replace=False)
+        p1, p2 = pts[idx[0]], pts[idx[1]]
+        d = p2 - p1
+        norm = np.linalg.norm(d)
+        if norm < 1e-9:
+            continue
+        nx, ny = -d[1] / norm, d[0] / norm
+        c = -(nx * p1[0] + ny * p1[1])
+
+        dists = np.abs(pts[:, 0] * nx + pts[:, 1] * ny + c)
+        inliers = np.sum(dists < threshold)
+
+        if inliers > best_inliers:
+            best_inliers = inliers
+            inlier_pts = pts[dists < threshold]
+            if len(inlier_pts) >= 2:
+                line = cv2.fitLine(
+                    inlier_pts.astype(np.float32).reshape(-1, 1, 2),
+                    cv2.DIST_L2, 0, 0.01, 0.01
+                ).flatten()
+                vx, vy, x0, y0 = line
+                nnx, nny = -float(vy), float(vx)
+                nnorm = np.sqrt(nnx*nnx + nny*nny)
+                if nnorm > 1e-9:
+                    nnx, nny = nnx / nnorm, nny / nnorm
+                    best_line = (nnx, nny, float(-(nnx*x0 + nny*y0)))
+
+    return best_line
+
+
+def _line_from_pts(p1: np.ndarray, p2: np.ndarray):
+    """Exact line through two points as (nx, ny, c) for nx*x+ny*y+c=0."""
+    d = p2.astype(np.float64) - p1.astype(np.float64)
+    n = np.array([-d[1], d[0]])
+    norm = np.linalg.norm(n)
+    if norm < 1e-9:
+        return None
+    n /= norm
+    return float(n[0]), float(n[1]), float(-n @ p1.astype(np.float64))
+
+
+def _intersect(l1, l2):
+    """Intersect two lines (nx,ny,c). Returns np.float32 [x,y] or None."""
+    if l1 is None or l2 is None:
+        return None
+    a1, b1, c1 = l1
+    a2, b2, c2 = l2
+    det = a1*b2 - a2*b1
+    if abs(det) < 1e-9:
+        return None
+    x = (b1*c2 - b2*c1) / det
+    y = (a2*c1 - a1*c2) / det
+    return np.array([x, y], dtype=np.float32)
+
+
+def subpixel_refine_ransac(mask: np.ndarray,
+                            rough_corners: np.ndarray) -> np.ndarray:
+    """
+    Sub-pixel corner refinement:
+    1. Extract 1-pixel boundary ring of the mask
+    2. Assign each boundary pixel to its nearest rough edge
+    3. RANSAC line fit per edge (robust to notch/rounded-corner outliers)
+    4. Intersect adjacent fitted lines → sub-pixel corners
+
+    Falls back to rough_corners if shift > 50px (sanity check).
+    """
+    k3 = np.ones((3, 3), np.uint8)
+    boundary = cv2.bitwise_and(mask, cv2.bitwise_not(cv2.erode(mask, k3)))
+    ys, xs = np.where(boundary > 0)
+    bpts = np.column_stack([xs.astype(np.float64), ys.astype(np.float64)])
+
+    if len(bpts) < 40:
+        return rough_corners
+
+    tl, tr, br, bl = rough_corners
+    rough_lines = [
+        _line_from_pts(tl, tr),  # top
+        _line_from_pts(tr, br),  # right
+        _line_from_pts(br, bl),  # bottom
+        _line_from_pts(bl, tl),  # left
+    ]
+
+    def perp_dist(pts, line):
+        if line is None:
+            return np.full(len(pts), 1e9)
+        a, b, c = line
+        return np.abs(pts[:, 0]*a + pts[:, 1]*b + c)
+
+    dists = np.column_stack([perp_dist(bpts, l) for l in rough_lines])
+    assignments = np.argmin(dists, axis=1)
+
+    fitted = []
+    names = ['top', 'right', 'bottom', 'left']
+    for i in range(4):
+        ep = bpts[assignments == i]
+        fl = fit_line_ransac(ep) if len(ep) >= 8 else None
+        print(f"  {names[i]}: {len(ep)} px"
+              f"{'' if fl else ' (RANSAC failed, using rough)'}")
+        fitted.append(fl if fl else rough_lines[i])
+
+    corners = [
+        _intersect(fitted[0], fitted[3]),  # TL = top ∩ left
+        _intersect(fitted[0], fitted[1]),  # TR = top ∩ right
+        _intersect(fitted[2], fitted[1]),  # BR = bottom ∩ right
+        _intersect(fitted[2], fitted[3]),  # BL = bottom ∩ left
+    ]
+
+    if any(c is None for c in corners):
+        print("[REFINE] Parallel edge detected — keeping rough corners")
+        return rough_corners
+
+    refined = np.array(corners, dtype=np.float32)
+    shift = float(np.abs(refined - rough_corners).max())
+    print(f"  RANSAC max corner shift: {shift:.2f}px")
+
+    if shift > 50:
+        print("[REFINE] Shift > 50px — keeping rough corners")
+        return rough_corners
+
+    return refined
+
+
+def detect_green_corners(scene: np.ndarray):
+    """
+    Full pipeline: mask → extreme quad corners → RANSAC sub-pixel refinement.
+    Returns (corners [TL,TR,BR,BL] float32 (4,2), blend_mask uint8 HxW)
+    or (None, None) if no green region found.
+    """
+    mask, contour = get_clean_mask(scene)
+    if mask is None:
+        return None, None
+
+    rough = extreme_quad_corners(contour)
+    print(f"[CORNERS] Rough:   TL={rough[0].astype(int)} TR={rough[1].astype(int)} "
+          f"BR={rough[2].astype(int)} BL={rough[3].astype(int)}")
+
+    refined = subpixel_refine_ransac(mask, rough)
+    print(f"[CORNERS] Refined: TL={refined[0].astype(int)} TR={refined[1].astype(int)} "
+          f"BR={refined[2].astype(int)} BL={refined[3].astype(int)}")
+
+    return refined, mask
+
+
+# ── COMPOSITE ────────────────────────────────────────────────────────────────
+
+def composite(scene: np.ndarray, ui: np.ndarray,
+              corners: np.ndarray, feather: int = 3,
+              blend_mask: np.ndarray = None) -> np.ndarray:
+    """
+    Perspective-warp UI into the detected screen quad and alpha-blend.
+
+    blend_mask: use actual green pixel mask (pixel-perfect, handles notch/occlusion).
+                Falls back to fillConvexPoly if not provided.
+    """
+    sh, sw = scene.shape[:2]
+    uh, uw = ui.shape[:2]
+
+    src = np.array([[0, 0], [uw-1, 0], [uw-1, uh-1], [0, uh-1]], dtype=np.float32)
+    M = cv2.getPerspectiveTransform(src, corners)
+    warped = cv2.warpPerspective(
+        ui, M, (sw, sh),
+        flags=cv2.INTER_LANCZOS4,
+        borderMode=cv2.BORDER_REPLICATE,
+    )
+
+    if blend_mask is not None:
+        mask_hard = blend_mask
+    else:
+        mask_hard = np.zeros((sh, sw), dtype=np.uint8)
+        cv2.fillConvexPoly(mask_hard, corners.astype(np.int32), 255)
+
+    if feather > 0:
+        br = feather * 2 + 1
+        mf = cv2.GaussianBlur(mask_hard.astype(np.float32) / 255.0,
+                               (br, br), feather * 0.5)
+        mask = (mf * 255).astype(np.uint8)
+    else:
+        mask = mask_hard
+
+    alpha = mask.astype(np.float32)[..., np.newaxis] / 255.0
+    result = (scene.astype(np.float32) * (1 - alpha) +
+              warped.astype(np.float32) * alpha)
+    return np.clip(result, 0, 255).astype(np.uint8)
+
+
+def add_screen_glare(result: np.ndarray, corners: np.ndarray,
+                     opacity: float = 0.08) -> np.ndarray:
+    """Optional: add subtle specular glare to simulate phone glass."""
+    if opacity <= 0:
+        return result
+    h, w = result.shape[:2]
+    tl, tr, br, bl = corners
+
+    glare = np.zeros((h, w), dtype=np.float32)
+    cx = int(tl[0] * 0.6 + tr[0] * 0.4)
+    cy = int(tl[1] * 0.6 + bl[1] * 0.4)
+    ax = max(int(np.linalg.norm(tr - tl) * 0.45), 1)
+    ay = max(int(np.linalg.norm(bl - tl) * 0.3), 1)
+
+    cv2.ellipse(glare, (cx, cy), (ax, ay), -20, 0, 360, 1.0, -1)
+    glare = cv2.GaussianBlur(glare, (0, 0), ax * 0.6)
+
+    screen_mask = np.zeros((h, w), dtype=np.float32)
+    cv2.fillConvexPoly(screen_mask, corners.astype(np.int32), 1.0)
+    glare *= screen_mask
+
+    white = np.ones_like(result, dtype=np.float32) * 255
+    a = (glare * opacity)[..., np.newaxis]
+    out = result.astype(np.float32) * (1 - a) + white * a
+    return np.clip(out, 0, 255).astype(np.uint8)
+
+
+# ── MAIN ─────────────────────────────────────────────────────────────────────
+
+def main():
+    ap = argparse.ArgumentParser(description="Realer Estate Compositor v4 Final")
+    ap.add_argument("--scene",   required=True, help="Scene image with green screen phone")
+    ap.add_argument("--ui",      required=True, help="UI screenshot to composite")
+    ap.add_argument("--output",  required=True, help="Output image path")
+    ap.add_argument("--corners", default=None,
+                    help="Corners JSON path (default: <scene>_corners.json)")
+    ap.add_argument("--pick",    action="store_true",
+                    help="Force interactive corner picking")
+    ap.add_argument("--feather", type=int,   default=3,
+                    help="Edge feather px (default: 3)")
+    ap.add_argument("--glare",   type=float, default=0.0,
+                    help="Screen glare opacity 0-1 (default: 0)")
+    ap.add_argument("--debug",   action="store_true",
+                    help="Save corner visualization alongside output")
+    args = ap.parse_args()
+
+    scene = cv2.imread(args.scene)
+    ui    = cv2.imread(args.ui)
+    if scene is None: sys.exit(f"[ERROR] Cannot load scene: {args.scene}")
+    if ui    is None: sys.exit(f"[ERROR] Cannot load UI: {args.ui}")
+
+    sh, sw = scene.shape[:2]
+    uh, uw = ui.shape[:2]
+    print(f"\n── Compositor v4 Final ──")
+    print(f"[LOAD] Scene: {sw}x{sh} | UI: {uw}x{uh}")
+    if uw > uh:
+        print(f"[WARN] UI is landscape ({uw}x{uh}) — expected portrait for phone")
+
+    corners_path = args.corners or \
+                   str(Path(args.scene).with_suffix("")) + "_corners.json"
+
+    blend_mask = None
+
+    if args.pick or not Path(corners_path).exists():
+        # Try auto-detection first; fall back to interactive
+        print(f"\n[DETECT] Auto-detecting green screen corners...")
+        corners, blend_mask = detect_green_corners(scene)
+        if corners is None:
+            print("[DETECT] Auto-detection failed — opening interactive picker")
+            corners = pick_corners_interactively(scene, corners_path)
+        else:
+            with open(corners_path, 'w') as f:
+                json.dump({"corners": corners.tolist(),
+                           "image_size": [sw, sh],
+                           "method": "ransac_subpixel"}, f, indent=2)
+            print(f"[SAVED] Corners → {corners_path}")
+    else:
+        print(f"\n[CORNERS] Loading saved corners...")
+        corners = load_corners(corners_path)
+        # Re-detect mask for pixel-accurate blending even when using saved corners
+        _, blend_mask = get_clean_mask(scene)
+
+    print(f"\n[COMPOSITE] Warping UI into screen quad...")
+    result = composite(scene, ui, corners, args.feather, blend_mask)
+
+    if args.glare > 0:
+        print(f"[GLARE] Adding {args.glare:.0%} screen glare...")
+        result = add_screen_glare(result, corners, args.glare)
+
+    if args.debug:
+        vis = scene.copy()
+        cv2.polylines(vis, [corners.astype(np.int32)], True, (0, 255, 0), 3)
+        for pt, lbl in zip(corners, ['TL', 'TR', 'BR', 'BL']):
+            cv2.circle(vis, tuple(pt.astype(int)), 8, (0, 0, 255), -1)
+            cv2.putText(vis, f"{lbl}({pt[0]:.0f},{pt[1]:.0f})",
+                        (int(pt[0])+8, int(pt[1])+5),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 255, 255), 2)
+        debug_path = str(Path(args.output).with_suffix("")) + "_corners.png"
+        cv2.imwrite(debug_path, vis)
+        print(f"[DEBUG] Corner viz → {debug_path}")
+
+    Path(args.output).parent.mkdir(parents=True, exist_ok=True)
+    cv2.imwrite(args.output, result)
+    print(f"\n[SAVED] {args.output}")
+    print(f"\n── Next run (same scene, new UI) ─────────────────────────")
+    print(f"  python compositor_v4_final.py \\")
+    print(f"    --scene {args.scene} \\")
+    print(f"    --ui NEW_UI.png \\")
+    print(f"    --output new_result.png")
+    print(f"  (corners auto-loaded from {corners_path})")
+    print(f"──────────────────────────────────────────────────────────\n")
+
+
+if __name__ == "__main__":
+    main()
