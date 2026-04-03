@@ -1,6 +1,6 @@
 """
 Green Screen Phone Compositor — Flask Backend
-Accepts two images, detects phone screen corners via CV green screen detection,
+Accepts two images, detects phone screen corners via Claude Vision,
 warps the UI screenshot into the screen quad, returns composited PNG.
 """
 
@@ -19,6 +19,7 @@ from flask import Flask, jsonify, render_template, request, send_file
 load_dotenv()
 
 import compositor_v4_final as compositor
+import vision_corner_detector as vcd
 
 CACHE_DIR = Path("/tmp/corners_cache")
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
@@ -46,7 +47,7 @@ def do_composite():
     if not scene_bytes or not ui_bytes:
         return jsonify({"error": "One or both uploaded files are empty."}), 400
 
-    # ── Decode images ─────────────────────────────────────────────────────────
+    # ── Decode images first so we can run CV detection ───────────────────────
     scene_arr = cv2.imdecode(np.frombuffer(scene_bytes, np.uint8), cv2.IMREAD_COLOR)
     ui_arr    = cv2.imdecode(np.frombuffer(ui_bytes,    np.uint8), cv2.IMREAD_COLOR)
 
@@ -57,95 +58,90 @@ def do_composite():
 
     sh, sw = scene_arr.shape[:2]
 
-    # ── Corner detection — CV green screen (no API, no file I/O needed) ───────
-    # Cache key: hash of scene bytes so same scene skips re-detection
-    scene_hash = hashlib.sha256(scene_bytes).hexdigest()
-    cache_path = CACHE_DIR / f"{scene_hash}.json"
+    # ── PRIMARY: CV-based green screen detection (pixel-perfect, free) ────────
+    # This works because the green screen placeholder is a solid saturated green
+    # rectangle — HSV chroma detection gives exact corners without any API call.
+    cv_corners, blend_mask = compositor.detect_green_corners(scene_arr)
 
-    blend_mask = None
-    cached = False
-
-    if cache_path.exists():
-        # Load cached corners (from a previous request with the same scene)
-        try:
-            with open(cache_path) as f:
-                corners_data = json.load(f)
-            corners = np.array(corners_data["corners"], dtype=np.float32)
-
-            # Scale if scene dimensions changed (shouldn't happen, but safe)
-            stored_w, stored_h = corners_data.get("image_size", [sw, sh])
-            if sw != stored_w or sh != stored_h:
-                print(f"[WARN] Dimension mismatch: stored={stored_w}x{stored_h}, "
-                      f"current={sw}x{sh}. Scaling corners.")
-                sx, sy = sw / stored_w, sh / stored_h
-                corners = np.array(
-                    [[pt[0] * sx, pt[1] * sy] for pt in corners_data["corners"]],
-                    dtype=np.float32
-                )
-
-            # Re-detect blend mask (it's cheap and not stored in cache)
-            _, blend_mask = compositor.get_clean_mask(scene_arr)
-            cached = True
-            detection_method = corners_data.get("method", "cached")
-            print(f"[DETECT] Using cached corners from {cache_path.name}")
-
-        except (json.JSONDecodeError, OSError, KeyError) as e:
-            print(f"[WARN] Cache read failed ({e}), re-detecting...")
-            cached = False
-
-    if not cached:
-        # Auto-detect via CV green screen — uses high-saturation HSV mask,
-        # extreme_quad_corners (convex hull diagonal projection), and
-        # RANSAC sub-pixel line fitting per edge.
-        print(f"[DETECT] Running CV green screen detection...")
-        corners, blend_mask = compositor.detect_green_corners(scene_arr)
-
-        if corners is None:
-            return jsonify({
-                "error": (
-                    "No green screen region detected in the scene image. "
-                    "Ensure the phone screen shows a solid chroma green (#00B140) "
-                    "with high saturation and no glare or gradients."
-                )
-            }), 422
-
+    if cv_corners is not None:
+        corners = cv_corners
         corners_data = {
-            "corners": corners.tolist(),
+            "corners": cv_corners.tolist(),
             "image_size": [sw, sh],
             "confidence": "high",
-            "notes": "Detected via HSV chroma key + RANSAC sub-pixel line fitting",
-            "method": "cv_ransac_subpixel",
+            "notes": "Detected via HSV chroma key analysis (pixel-perfect)",
+            "method": "cv_green",
         }
+        cached = False
+        detection_method = "cv_green"
+        print(f"[DETECT] Using CV green-screen detection")
+    else:
+        # ── FALLBACK: Vision API (for scenes without a visible green screen) ──
+        blend_mask = None
+        detection_method = "vision_llm"
+        scene_hash = hashlib.sha256(scene_bytes).hexdigest()
+        cache_path = CACHE_DIR / f"{scene_hash}.json"
+        cached = cache_path.exists()
 
-        # Save to cache — keyed by scene image hash so same scene is instant next time
-        with open(cache_path, "w") as f:
-            json.dump(corners_data, f, indent=2)
-        print(f"[DETECT] Corners cached → {cache_path}")
-        detection_method = "cv_ransac_subpixel"
+        if cached:
+            try:
+                with open(cache_path) as f:
+                    corners_data = json.load(f)
+            except (json.JSONDecodeError, OSError):
+                cached = False
+                corners_data = None
 
-    # ── Debug visualization: draw detected quad on scene copy ─────────────────
+        if not cached:
+            suffix = Path(scene_file.filename or "scene.png").suffix or ".png"
+            with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tf:
+                tf.write(scene_bytes)
+                scene_tmp = tf.name
+
+            try:
+                corners_data = vcd.detect_corners_with_vision(scene_tmp)
+            except Exception as exc:
+                os.unlink(scene_tmp)
+                return jsonify({"error": f"Vision API error: {exc}"}), 502
+            finally:
+                try:
+                    os.unlink(scene_tmp)
+                except OSError:
+                    pass
+
+            with open(cache_path, "w") as f:
+                json.dump(corners_data, f, indent=2)
+
+        # Scale corners if scene dimensions changed since detection
+        stored_w, stored_h = corners_data.get("image_size", [sw, sh])
+        if sw != stored_w or sh != stored_h:
+            print(f"[WARN] Dimension mismatch: detection={stored_w}x{stored_h}, "
+                  f"composite={sw}x{sh}. Scaling corners.")
+            sx, sy = sw / stored_w, sh / stored_h
+            corners_data["corners"] = [
+                [pt[0] * sx, pt[1] * sy] for pt in corners_data["corners"]
+            ]
+            corners_data["image_size"] = [sw, sh]
+
+        corners = np.array(corners_data["corners"], dtype=np.float32)
+        print(f"[DETECT] Using Vision API detection (cached={cached})")
+
+    # ── Debug quad: draw detected polygon on scene copy ──────────────────────
     debug_arr = scene_arr.copy()
     quad = corners.astype(np.int32)
     cv2.polylines(debug_arr, [quad], isClosed=True, color=(0, 255, 0), thickness=3)
     for pt, label in zip(quad, ["TL", "TR", "BR", "BL"]):
         cv2.circle(debug_arr, tuple(pt), 10, (0, 0, 255), -1)
-        cv2.putText(
-            debug_arr, label,
-            (int(pt[0]) + 12, int(pt[1]) + 6),
-            cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 255), 2
-        )
+        cv2.putText(debug_arr, label, (int(pt[0]) + 12, int(pt[1]) + 6),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 255), 2)
 
     # ── Composite ────────────────────────────────────────────────────────────
     try:
-        result = compositor.composite(
-            scene_arr, ui_arr, corners,
-            feather=3,
-            blend_mask=blend_mask
-        )
+        result = compositor.composite(scene_arr, ui_arr, corners,
+                                      blend_mask=blend_mask)
     except Exception as exc:
         return jsonify({"error": f"Compositor error: {exc}"}), 500
 
-    # ── Encode and return ────────────────────────────────────────────────────
+    # ── Encode results ───────────────────────────────────────────────────────
     import base64
 
     def _encode_png(arr: np.ndarray) -> str:
@@ -155,19 +151,22 @@ def do_composite():
         return base64.b64encode(buf.tobytes()).decode()
 
     stored_w, stored_h = corners_data.get("image_size", [sw, sh])
-
-    return jsonify({
-        "image":            _encode_png(result),
-        "debug_image":      _encode_png(debug_arr),
-        "corners":          corners_data["corners"],
-        "detection_size":   [stored_w, stored_h],
-        "composite_size":   [sw, sh],
-        "confidence":       corners_data.get("confidence", "unknown"),
-        "notes":            corners_data.get("notes", ""),
-        "cached":           cached,
-        "detection_method": detection_method,
-    })
+    return jsonify(
+        {
+            "image": _encode_png(result),
+            "debug_image": _encode_png(debug_arr),
+            "corners": corners_data["corners"],
+            "detection_size": [stored_w, stored_h],
+            "composite_size": [sw, sh],
+            "confidence": corners_data.get("confidence", "unknown"),
+            "notes": corners_data.get("notes", ""),
+            "cached": cached,
+            "detection_method": detection_method,
+        }
+    )
 
 
 if __name__ == "__main__":
+    if not os.environ.get("ANTHROPIC_API_KEY"):
+        print("[WARN] ANTHROPIC_API_KEY is not set — Vision API calls will fail.")
     app.run(debug=True, port=5000)
