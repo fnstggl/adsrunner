@@ -353,11 +353,8 @@
   const cornerRow   = document.getElementById('corner-row');
   const cacheBadge  = document.getElementById('cache-badge');
   const debugNotes  = document.getElementById('debug-notes');
-<<<<<<< fix/corner-detection-bugs
   const sizeInfo    = document.getElementById('size-info');
   const debugImg    = document.getElementById('debug-img');
-=======
->>>>>>> main
 
   let fileScene = null;
   let fileUi    = null;
@@ -475,7 +472,6 @@
 
   function renderDebug(data) {
     const labels = ['TL', 'TR', 'BR', 'BL'];
-<<<<<<< fix/corner-detection-bugs
     const corners = data.corners || [];
 
     // Corner table — flag if axis-aligned (bug indicator)
@@ -484,22 +480,15 @@
       Math.abs(corners[2][1] - corners[3][1]) < 5;
 
     cornerRow.innerHTML = corners.map((pt, i) =>
-=======
-    cornerRow.innerHTML = (data.corners || []).map((pt, i) =>
->>>>>>> main
       `<div class="corner-item">
         <span class="corner-label">${labels[i]}</span>
         <span> [${pt[0]}, ${pt[1]}]</span>
       </div>`
-<<<<<<< fix/corner-detection-bugs
     ).join('') + (isAxisAligned
       ? `<div style="color:var(--red);margin-top:4px;width:100%;">
            ⚠ Corners look axis-aligned — may be a bounding box, not true quad.
          </div>`
       : '');
-=======
-    ).join('');
->>>>>>> main
 
     cacheBadge.textContent = data.cached ? 'cache hit' : 'fresh detection';
     cacheBadge.className = `cache-badge ${data.cached ? 'hit' : 'miss'}`;
@@ -508,7 +497,6 @@
       ? `<span style="color:var(--text)">Notes:</span> ${escapeHtml(data.notes)}`
         + (data.confidence ? ` &nbsp;·&nbsp; Confidence: ${escapeHtml(data.confidence)}` : '')
       : '';
-<<<<<<< fix/corner-detection-bugs
 
     // Resolution info
     if (data.detection_size && data.composite_size) {
@@ -525,8 +513,6 @@
     if (data.debug_image) {
       debugImg.src = `data:image/png;base64,${data.debug_image}`;
     }
-=======
->>>>>>> main
   }
 
   function escapeHtml(s) {
