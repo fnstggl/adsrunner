@@ -1,5 +1,5 @@
 """
-Image generation via fal.ai API (Flux models).
+Image generation via fal.ai API.
 """
 
 import io
@@ -12,7 +12,7 @@ import cv2
 
 def generate_image(prompt: str, width: int = 1080, height: int = 1350) -> np.ndarray:
     """
-    Generate a single image from a text prompt using fal.ai Flux.
+    Generate a single image from a text prompt using fal.ai nano-banana-2.
 
     Returns: BGR numpy array (OpenCV format)
     """
@@ -27,7 +27,7 @@ def generate_image(prompt: str, width: int = 1080, height: int = 1350) -> np.nda
     if not fal_key:
         raise RuntimeError("FAL_KEY environment variable is not set")
 
-    model = os.environ.get("FAL_MODEL", "fal-ai/flux-pro/v1.1")
+    model = os.environ.get("FAL_MODEL", "fal-ai/nano-banana-2")
 
     result = fal_client.subscribe(
         model,
