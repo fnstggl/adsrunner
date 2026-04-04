@@ -1,4 +1,4 @@
-“””
+"""
 Deterministic text overlay renderer for ad images.
 
 Implements a layout engine with:
@@ -8,7 +8,7 @@ Implements a layout engine with:
 - font shrinking until text fits its allocated box
 - collision prevention between headline/sub stack and CTA
 - independently anchored CTA pill button
-  “””
+  """
 
 import os
 from typing import Optional
@@ -20,33 +20,33 @@ from PIL import Image, ImageDraw, ImageFont
 
 FONT_PATHS_BOLD = [
 # macOS — confirmed present
-“/System/Library/Fonts/Supplemental/Arial Bold.ttf”,
-“/System/Library/Fonts/Supplemental/Impact.ttf”,
-“/System/Library/Fonts/Supplemental/Trebuchet MS Bold.ttf”,
-“/System/Library/Fonts/Supplemental/Verdana Bold.ttf”,
-“/System/Library/Fonts/Supplemental/Georgia Bold.ttf”,
-“/System/Library/Fonts/HelveticaNeue.ttc”,
-“/System/Library/Fonts/Avenir Next.ttc”,
+"/System/Library/Fonts/Supplemental/Arial Bold.ttf",
+"/System/Library/Fonts/Supplemental/Impact.ttf",
+"/System/Library/Fonts/Supplemental/Trebuchet MS Bold.ttf",
+"/System/Library/Fonts/Supplemental/Verdana Bold.ttf",
+"/System/Library/Fonts/Supplemental/Georgia Bold.ttf",
+"/System/Library/Fonts/HelveticaNeue.ttc",
+"/System/Library/Fonts/Avenir Next.ttc",
 # Linux
-“/usr/share/fonts/truetype/google-fonts/Poppins-Bold.ttf”,
-“/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf”,
-“/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf”,
-“/usr/share/fonts/truetype/freefont/FreeSansBold.ttf”,
+"/usr/share/fonts/truetype/google-fonts/Poppins-Bold.ttf",
+"/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+"/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+"/usr/share/fonts/truetype/freefont/FreeSansBold.ttf",
 ]
 FONT_PATHS_REGULAR = [
 # macOS — confirmed present
-“/System/Library/Fonts/Supplemental/Arial.ttf”,
-“/System/Library/Fonts/Supplemental/Trebuchet MS.ttf”,
-“/System/Library/Fonts/Supplemental/Verdana.ttf”,
-“/System/Library/Fonts/Supplemental/Georgia.ttf”,
-“/System/Library/Fonts/HelveticaNeue.ttc”,
-“/System/Library/Fonts/Avenir Next.ttc”,
+"/System/Library/Fonts/Supplemental/Arial.ttf",
+"/System/Library/Fonts/Supplemental/Trebuchet MS.ttf",
+"/System/Library/Fonts/Supplemental/Verdana.ttf",
+"/System/Library/Fonts/Supplemental/Georgia.ttf",
+"/System/Library/Fonts/HelveticaNeue.ttc",
+"/System/Library/Fonts/Avenir Next.ttc",
 # Linux
-“/usr/share/fonts/truetype/google-fonts/Poppins-Medium.ttf”,
-“/usr/share/fonts/truetype/google-fonts/Poppins-Regular.ttf”,
-“/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf”,
-“/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf”,
-“/usr/share/fonts/truetype/freefont/FreeSans.ttf”,
+"/usr/share/fonts/truetype/google-fonts/Poppins-Medium.ttf",
+"/usr/share/fonts/truetype/google-fonts/Poppins-Regular.ttf",
+"/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+"/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+"/usr/share/fonts/truetype/freefont/FreeSans.ttf",
 ]
 
 # ─── Font helpers ──────────────────────────────────────────────────────────────
@@ -73,12 +73,12 @@ text: str,
 font: ImageFont.FreeTypeFont,
 max_width: int,
 ) -> list[str]:
-“”“Word-wrap using actual font metrics.”””
+"""Word-wrap using actual font metrics."""
 words = text.split()
 lines: list[str] = []
-current = “”
+current = ""
 for word in words:
-candidate = (current + “ “ + word).strip()
+candidate = (current + " " + word).strip()
 bb = font.getbbox(candidate)
 w = bb[2] - bb[0]
 if w <= max_width:
@@ -96,7 +96,7 @@ lines: list[str],
 font: ImageFont.FreeTypeFont,
 line_height_ratio: float,
 ) -> tuple[int, int]:
-“”“Return (max_line_width, total_block_height) using actual glyph metrics.”””
+"""Return (max_line_width, total_block_height) using actual glyph metrics."""
 if not lines:
 return 0, 0
 max_w = 0
@@ -123,7 +123,7 @@ max_height: int,
 max_lines: int,
 line_height_ratio: float,
 ) -> tuple[int, ImageFont.FreeTypeFont, list[str], int, int]:
-“”“Shrink font until block fits. Returns (size, font, lines, bw, bh).”””
+"""Shrink font until block fits. Returns (size, font, lines, bw, bh)."""
 size = max(min_size, min(max_size, start_size))
 while True:
 font = _load_font(font_path, size)
@@ -137,20 +137,20 @@ size = max(min_size, int(size * 0.93))
 # ─── Drawing helpers ───────────────────────────────────────────────────────────
 
 def _draw_shadow(draw, x, y, text, font, strength=3):
-“”“Layered drop-shadow for readability over any background.”””
+"""Layered drop-shadow for readability over any background."""
 for ox in range(1, strength + 1):
 alpha = int(200 - ox * 20)
 draw.text((x + ox, y + ox), text, font=font, fill=(0, 0, 0, alpha))
 
 def _x_for_align(x_anchor: int, line_w: int, align: str) -> int:
-if align == “center”:
+if align == "center":
 return x_anchor - line_w // 2
-if align == “right”:
+if align == "right":
 return x_anchor - line_w
 return x_anchor
 
 def _draw_text_with_outline(draw, x, y, text, font, fill, outline_color=(0,0,0,200), outline_width=3):
-“”“Draw text with a strong outline for maximum readability.”””
+"""Draw text with a strong outline for maximum readability."""
 for dx in range(-outline_width, outline_width + 1):
 for dy in range(-outline_width, outline_width + 1):
 if dx != 0 or dy != 0:
@@ -160,11 +160,11 @@ draw.text((x, y), text, font=font, fill=fill)
 # ─── Dark scrim helper ─────────────────────────────────────────────────────────
 
 def _apply_bottom_scrim(overlay: Image.Image, scrim_top: int, canvas_h: int, canvas_w: int) -> Image.Image:
-“””
+"""
 Paint a dark gradient scrim from scrim_top to bottom of canvas.
 This ensures text always has contrast regardless of image content.
-“””
-scrim = Image.new(“RGBA”, (canvas_w, canvas_h), (0, 0, 0, 0))
+"""
+scrim = Image.new("RGBA", (canvas_w, canvas_h), (0, 0, 0, 0))
 sd = ImageDraw.Draw(scrim)
 band = canvas_h - scrim_top
 for i in range(band):
@@ -180,13 +180,13 @@ return Image.alpha_composite(overlay, scrim)
 def render_text_overlay(
 image: np.ndarray,
 headline: str,
-subheadline: str = “”,
-cta: str = “”,
-zone: str = “bottom-center”,
-template: str = “light-on-dark”,
+subheadline: str = "",
+cta: str = "",
+zone: str = "bottom-center",
+template: str = "light-on-dark",
 logo: np.ndarray = None,
 ) -> np.ndarray:
-“””
+"""
 Render headline, subheadline, and CTA onto an ad image.
 
 ```
