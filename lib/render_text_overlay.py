@@ -10,6 +10,7 @@ Implements a layout engine with:
 """
 
 import os
+from typing import Optional
 import cv2
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
@@ -28,7 +29,7 @@ FONT_PATHS_REGULAR = [
 
 # ─── Font helpers ─────────────────────────────────────────────────────────────
 
-def _find_font(bold: bool = True) -> str | None:
+def _find_font(bold: bool = True) -> Optional[str]:
     paths = FONT_PATHS_BOLD if bold else FONT_PATHS_REGULAR
     for p in paths:
         if os.path.exists(p):
@@ -40,7 +41,7 @@ def _find_font(bold: bool = True) -> str | None:
     return None
 
 
-def _load_font(path: str | None, size: int) -> ImageFont.FreeTypeFont:
+def _load_font(path: Optional[str], size: int) -> ImageFont.FreeTypeFont:
     if path:
         return ImageFont.truetype(path, size)
     return ImageFont.load_default()
@@ -98,7 +99,7 @@ def measure_text_block(
 
 def fit_text_block(
     text: str,
-    font_path: str | None,
+    font_path: Optional[str],
     start_size: int,
     min_size: int,
     max_size: int,
