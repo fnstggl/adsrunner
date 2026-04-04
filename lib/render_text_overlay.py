@@ -119,7 +119,7 @@ def fit_text_block(
         lines = wrap_text_to_width(text, font, max_width)
         lines = lines[:max_lines]  # hard cap on line count
         bw, bh = measure_text_block(lines, font, line_height_ratio)
-        if bh <= max_height or size <= min_size:
+        if (bh <= max_height and bw <= max_width) or size <= min_size:
             return size, font, lines, bw, bh
         # Shrink by ~5% per iteration
         size = max(min_size, int(size * 0.95))
@@ -175,19 +175,19 @@ def render_text_overlay(
     h, w = image.shape[:2]
 
     # ══ Safe-area constants (all canvas-relative) ══════════════════════════════
-    h_margin        = int(w  * 0.08)    # horizontal margin both sides
-    hl_box_top      = int(h  * 0.06)    # headline box top edge
-    hl_box_height   = int(h  * 0.18)    # max height for headline block
+    h_margin        = int(w  * 0.05)    # horizontal margin both sides
+    hl_box_top      = int(h  * 0.05)    # headline box top edge
+    hl_box_height   = int(h  * 0.30)    # max height for headline block
     sub_gap         = int(h  * 0.02)    # gap between headline bottom and sub top
-    sub_box_height  = int(h  * 0.10)    # max height for subheadline block
-    cta_center_y    = int(h  * 0.88)    # CTA button vertical center
+    sub_box_height  = int(h  * 0.14)    # max height for subheadline block
+    cta_center_y    = int(h  * 0.82)    # CTA button vertical center
     cta_safe_buffer = int(h  * 0.03)    # clearance above CTA for upper stack
 
-    hl_max_w  = int(w * 0.84)
-    sub_max_w = int(w * 0.80)
+    hl_max_w  = int(w * 0.90)
+    sub_max_w = int(w * 0.88)
 
-    cta_pad_x = int(w * 0.06)
-    cta_pad_y = int(h * 0.015)
+    cta_pad_x = int(w * 0.07)
+    cta_pad_y = int(h * 0.018)
 
     # ══ Font paths ═════════════════════════════════════════════════════════════
     bold_path    = _find_font(bold=True)
@@ -195,35 +195,35 @@ def render_text_overlay(
 
     # ══ Step 1: Fit headline into its box ══════════════════════════════════════
     hl_text = (headline or "").upper()
-    hl_start = max(64, min(180, int(h * 0.08)))
+    hl_start = max(80, min(240, int(h * 0.11)))
 
     hl_size, hl_font, hl_lines, hl_bw, hl_bh = fit_text_block(
         text=hl_text,
         font_path=bold_path,
         start_size=hl_start,
-        min_size=64,
-        max_size=180,
+        min_size=80,
+        max_size=240,
         max_width=hl_max_w,
         max_height=hl_box_height,
         max_lines=4,
-        line_height_ratio=1.06,
+        line_height_ratio=1.08,
     )
 
     # ══ Step 2: Fit subheadline into its box ══════════════════════════════════
     sub_text  = subheadline or ""
-    sub_start = max(32, min(90, int(h * 0.045)))
+    sub_start = max(40, min(110, int(h * 0.055)))
 
     if sub_text:
         sub_size, sub_font, sub_lines, sub_bw, sub_bh = fit_text_block(
             text=sub_text,
             font_path=regular_path,
             start_size=sub_start,
-            min_size=32,
-            max_size=90,
+            min_size=40,
+            max_size=110,
             max_width=sub_max_w,
             max_height=sub_box_height,
             max_lines=3,
-            line_height_ratio=1.20,
+            line_height_ratio=1.15,
         )
     else:
         sub_size  = sub_start
@@ -232,7 +232,7 @@ def render_text_overlay(
         sub_bh    = 0
 
     # ══ Step 3: Compute CTA geometry (independently anchored) ═════════════════
-    cta_size  = max(28, min(70, int(h * 0.035)))
+    cta_size  = max(36, min(90, int(h * 0.05)))
     cta_font  = _load_font(bold_path, cta_size)
     cta_upper = (cta or "").upper()
 
@@ -266,12 +266,12 @@ def render_text_overlay(
         if stack_bottom <= cta_safe_top:
             break   # ✓ no collision
 
-        if hl_size <= 64 and sub_size <= 32:
+        if hl_size <= 80 and sub_size <= 40:
             break   # already at minimum — accept whatever layout we have
 
         # Shrink both by 5%
-        new_hl_size  = max(64, int(hl_size  * 0.95))
-        new_sub_size = max(32, int(sub_size * 0.95))
+        new_hl_size  = max(80, int(hl_size  * 0.95))
+        new_sub_size = max(40, int(sub_size * 0.95))
 
         if new_hl_size == hl_size and new_sub_size == sub_size:
             break   # no progress possible
@@ -294,16 +294,11 @@ def render_text_overlay(
     hl_y  = hl_box_top
     sub_y = hl_y + hl_bh + sub_gap
 
-    # ══ Step 5: Determine x-alignment from zone ════════════════════════════════
-    if "left" in zone:
-        x_anchor = h_margin
-        align    = "left"
-    elif "right" in zone:
-        x_anchor = w - h_margin
-        align    = "right"
-    else:
-        x_anchor = w // 2
-        align    = "center"
+    # ══ Step 5: Always center text across the full width ═════════════════════
+    # Zone controls where the AI image leaves negative space, but text overlay
+    # always spans the full width centered for maximum impact and readability.
+    x_anchor = w // 2
+    align    = "center"
 
     # ══ Step 6: Color scheme ═══════════════════════════════════════════════════
     if template in ("light-on-dark", "gradient-overlay"):
