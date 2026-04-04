@@ -108,7 +108,7 @@ CRITICAL: Do NOT include ANY text, words, letters, typography, logos, or brand n
 
 
 def generate_all_prompts(specs: list[dict], product_description: str) -> list[str]:
-    """Generate prompts for all 5 creative specs."""
+    """Generate prompts for all creative specs."""
     prompts = []
     for spec in specs:
         prompt = generate_prompt(spec, product_description)
