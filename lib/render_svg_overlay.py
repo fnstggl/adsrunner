@@ -5,6 +5,8 @@ Replaces the PIL/OpenCV renderer with Claude-generated SVGs rasterized via Cairo
 All fonts and images are embedded as base64 — zero network dependencies at render time.
 """
 
+from __future__ import annotations
+
 import base64
 import io
 import re
