@@ -11,7 +11,6 @@ import re
 import traceback
 
 import anthropic
-import cairosvg
 import cv2
 import numpy as np
 import requests
@@ -318,6 +317,7 @@ def render_text_overlay(
         svg_str = svg_str.replace("__IMAGE_DATA_URI__", image_data_uri)
 
         # Step 4: Rasterize with CairoSVG
+        import cairosvg
         png_bytes = cairosvg.svg2png(
             bytestring=svg_str.encode("utf-8"),
             output_width=1080,
