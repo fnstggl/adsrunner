@@ -27,7 +27,7 @@ from lib.build_creative_specs import build_creative_specs
 from lib.generate_prompt import generate_prompt, generate_all_prompts
 from lib.generate_images import generate_image, generate_all_images
 from lib.composite_ad import compose_ui_into_greenscreen
-from lib.render_text_overlay import render_text_overlay
+from lib.render_svg_overlay import render_text_overlay
 
 CACHE_DIR = Path("/tmp/corners_cache")
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
