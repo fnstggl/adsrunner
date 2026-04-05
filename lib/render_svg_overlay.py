@@ -121,7 +121,7 @@ def _build_font_face_css(fonts: dict[str, str]) -> str:
 _SYSTEM_PROMPT = """You are a world-class Meta/Instagram ad creative director and SVG typographer. Your ads are indistinguishable from those produced by top creative studios. You have studied the typography and layout of high-performing ads from Poppi, Base44, Ridge, and Kassable.
 
 You will receive:
-- A base image embedded as a base64 data URI
+- A reference photo (for visual context — layout, negative space, colors, subject position)
 - Pre-embedded font @font-face declarations
 - Ad copy: headline, subheadline, CTA
 - Image description
@@ -130,14 +130,14 @@ You must output a SINGLE complete SVG file. Output ONLY the SVG. No explanation.
 
 SVG TECHNICAL REQUIREMENTS:
 - viewBox="0 0 1080 1350" width="1080" height="1350"
-- First child element: <image href="__IMAGE_DATA_URI__" x="0" y="0" width="1080" height="1350" preserveAspectRatio="xMidYMid slice"/>
-- IMPORTANT: Use the EXACT placeholder string __IMAGE_DATA_URI__ as the href value for the background image. It will be replaced with the real base64 data after generation.
+- The SVG background MUST be fully transparent. Do NOT include any <image> element, background <rect>, or any element that fills the full canvas. You are generating a text/overlay layer only — it will be composited onto the photo in post-processing.
+- Do NOT include any <image> element of any kind. No background image. No placeholder. Nothing.
 - If @font-face CSS is provided below, include it EXACTLY as-is inside a <defs><style> block. Do NOT modify, regenerate, or invent any base64 font data.
 - If no @font-face CSS is provided, use font-family names directly without @font-face declarations. Do NOT generate any base64-encoded data yourself.
 - NEVER generate base64-encoded strings of any kind. All base64 data is pre-provided to you.
 - Text elements use <text> with explicit x, y positioning. Do NOT use <foreignObject>.
 - For multi-line text, use multiple <tspan> elements with x and dy attributes
-- For scrim/overlay effects use <rect> with fill opacity or linearGradient
+- For scrim/overlay effects use <rect> with fill opacity or linearGradient (these are fine — they will composite correctly over the photo)
 - For the CTA pill: <rect> with rx equal to half its height, plus centered <text>
 
 CRITICAL SVG RULES (CairoSVG compatibility):
@@ -198,7 +198,7 @@ CTA: {cta}
 EMBEDDED @font-face CSS (include EXACTLY as-is in <defs><style> — do NOT modify or regenerate):
 {font_face_css if font_face_css else "(No fonts were pre-embedded. Use font-family names without @font-face. Do NOT generate any base64 data.)"}
 
-BACKGROUND IMAGE: Use the placeholder __IMAGE_DATA_URI__ as the href for the <image> element. I will replace it with the actual base64 data URI after you generate the SVG. The image is shown above for your visual reference.
+BACKGROUND IMAGE: The photo above is shown for your visual reference only — use it to understand negative space, subject position, and color palette. Do NOT include any <image> element in your SVG. The SVG must be transparent where there is no text or overlay element.
 
 AVAILABLE FONTS (all pre-embedded as @font-face — use exact font-family names as shown):
 
@@ -267,21 +267,20 @@ def render_text_overlay(
     drop-in replacement.  Falls back to the PIL renderer on any error.
     """
     try:
-        # Step 1: Encode base image as base64 data URI
+        # Step 1: Encode base image as base64 (for Claude vision only — not embedded in SVG)
         rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
         pil_img = Image.fromarray(rgb)
         buf = io.BytesIO()
         pil_img.save(buf, format="PNG")
         img_b64 = base64.b64encode(buf.getvalue()).decode()
-        image_data_uri = f"data:image/png;base64,{img_b64}"
 
         # Step 2: Fetch and embed fonts
         fonts = _fetch_fonts()
         font_face_css = _build_font_face_css(fonts)
 
-        # Step 3: Call Claude to generate SVG
-        # Send image via vision content block so Claude can see it.
-        # Claude outputs __IMAGE_DATA_URI__ placeholder; we replace it after.
+        # Step 3: Call Claude to generate transparent SVG overlay
+        # The image is sent as a vision block so Claude can analyse layout/colors,
+        # but the SVG it produces contains NO embedded image — transparent background only.
         client = anthropic.Anthropic()
         user_content = _build_user_content(
             img_b64=img_b64,
@@ -315,10 +314,14 @@ def render_text_overlay(
             else:
                 raise ValueError("Claude response does not contain valid SVG")
 
-        # Inject the actual base64 image data URI in place of placeholder
-        svg_str = svg_str.replace("__IMAGE_DATA_URI__", image_data_uri)
+        # Safety net: strip any <image> elements Claude may have hallucinated.
+        # These would re-introduce the large-payload freeze we're avoiding.
+        svg_str = re.sub(r"<image\b[^>]*/?>", "", svg_str)
 
-        # Step 4: Rasterize with CairoSVG
+        print(f"[SVG_RENDER] SVG payload size: {len(svg_str):,} bytes (no embedded image)")
+
+        # Step 4: Rasterize the transparent overlay SVG with CairoSVG.
+        # With no embedded image, the payload is ~200 KB (fonts only) — renders in seconds.
         import cairosvg
         png_bytes = cairosvg.svg2png(
             bytestring=svg_str.encode("utf-8"),
@@ -326,9 +329,19 @@ def render_text_overlay(
             output_height=1350,
         )
 
-        # Decode to numpy BGR array
-        pil_result = Image.open(io.BytesIO(png_bytes)).convert("RGB")
-        rgb_arr = np.array(pil_result)
+        # Step 5: Alpha-composite the transparent overlay onto the original photo.
+        overlay_pil = Image.open(io.BytesIO(png_bytes)).convert("RGBA")
+
+        # Prepare background: resize to exact output dimensions if needed
+        bg_pil = Image.fromarray(rgb).convert("RGBA")
+        if bg_pil.size != (1080, 1350):
+            bg_pil = bg_pil.resize((1080, 1350), Image.LANCZOS)
+
+        # Composite: overlay sits on top of photo, respecting per-pixel alpha
+        bg_pil.alpha_composite(overlay_pil)
+
+        # Convert back to BGR numpy array for the rest of the pipeline
+        rgb_arr = np.array(bg_pil.convert("RGB"))
         bgr_arr = cv2.cvtColor(rgb_arr, cv2.COLOR_RGB2BGR)
 
         print(f"[SVG_RENDER] Success — output shape {bgr_arr.shape}")
