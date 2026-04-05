@@ -129,9 +129,11 @@ You must output a SINGLE complete SVG file. Output ONLY the SVG. No explanation.
 
 SVG TECHNICAL REQUIREMENTS:
 - viewBox="0 0 1080 1350" width="1080" height="1350"
-- First child element: <image href="{IMAGE_DATA_URI}" x="0" y="0" width="1080" height="1350" preserveAspectRatio="xMidYMid slice"/>
-- All @font-face declarations inside a <defs><style> block at the top
-- Use only the pre-embedded fonts
+- First child element: <image href="__IMAGE_DATA_URI__" x="0" y="0" width="1080" height="1350" preserveAspectRatio="xMidYMid slice"/>
+- IMPORTANT: Use the EXACT placeholder string __IMAGE_DATA_URI__ as the href value for the background image. It will be replaced with the real base64 data after generation.
+- If @font-face CSS is provided below, include it EXACTLY as-is inside a <defs><style> block. Do NOT modify, regenerate, or invent any base64 font data.
+- If no @font-face CSS is provided, use font-family names directly without @font-face declarations. Do NOT generate any base64-encoded data yourself.
+- NEVER generate base64-encoded strings of any kind. All base64 data is pre-provided to you.
 - Text elements use <text> with explicit x, y positioning. Do NOT use <foreignObject>.
 - For multi-line text, use multiple <tspan> elements with x and dy attributes
 - For scrim/overlay effects use <rect> with fill opacity or linearGradient
@@ -172,24 +174,18 @@ WHAT MAKES AN AD PROFITABLE VS GENERIC:
 # User message builder
 # ---------------------------------------------------------------------------
 
-def _build_user_message(
-    image_data_uri: str,
+def _build_user_content(
+    img_b64: str,
     font_face_css: str,
     headline: str,
     subheadline: str,
     cta: str,
     image_description: str,
     performance_hints: str,
-    fonts: dict[str, str],
-) -> str:
-    # List available font families (only those successfully fetched)
-    available = []
-    for entry in _FONT_FACE_MAP:
-        if fonts.get(entry["key"], ""):
-            style_note = f" {entry['style']}" if entry["style"] != "normal" else ""
-            available.append(f"'{entry['family']}' weight {entry['weight']}{style_note}")
+) -> list[dict]:
+    """Build the user message content blocks (vision image + text instructions)."""
 
-    msg = f"""IMAGE DESCRIPTION: {image_description}
+    text_msg = f"""IMAGE DESCRIPTION: {image_description}
 
 AD COPY:
 Headline: {headline}
@@ -198,11 +194,10 @@ CTA: {cta}
 
 {"PERFORMANCE HINTS: " + performance_hints if performance_hints else ""}
 
-EMBEDDED @font-face CSS (include this EXACTLY in <defs><style>):
-{font_face_css}
+EMBEDDED @font-face CSS (include EXACTLY as-is in <defs><style> — do NOT modify or regenerate):
+{font_face_css if font_face_css else "(No fonts were pre-embedded. Use font-family names without @font-face. Do NOT generate any base64 data.)"}
 
-BASE IMAGE DATA URI (embed as the first <image> element):
-{image_data_uri}
+BACKGROUND IMAGE: Use the placeholder __IMAGE_DATA_URI__ as the href for the <image> element. I will replace it with the actual base64 data URI after you generate the SVG. The image is shown above for your visual reference.
 
 AVAILABLE FONTS (all pre-embedded as @font-face — use exact font-family names as shown):
 
@@ -235,7 +230,18 @@ FONT PAIRING RULES — choose one combination that fits the ad's mood:
 - The CTA button text is always Inter 700, letter-spacing: 0.08em, regardless of headline font.
 
 Generate the complete SVG ad now."""
-    return msg
+
+    return [
+        {
+            "type": "image",
+            "source": {
+                "type": "base64",
+                "media_type": "image/png",
+                "data": img_b64,
+            },
+        },
+        {"type": "text", "text": text_msg},
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -273,41 +279,43 @@ def render_text_overlay(
         font_face_css = _build_font_face_css(fonts)
 
         # Step 3: Call Claude to generate SVG
+        # Send image via vision content block so Claude can see it.
+        # Claude outputs __IMAGE_DATA_URI__ placeholder; we replace it after.
         client = anthropic.Anthropic()
-        user_msg = _build_user_message(
-            image_data_uri=image_data_uri,
+        user_content = _build_user_content(
+            img_b64=img_b64,
             font_face_css=font_face_css,
             headline=headline,
             subheadline=subheadline,
             cta=cta,
             image_description=image_description,
             performance_hints=performance_hints,
-            fonts=fonts,
         )
 
         response = client.messages.create(
             model="claude-sonnet-4-20250514",
             max_tokens=16000,
             system=_SYSTEM_PROMPT,
-            messages=[{"role": "user", "content": user_msg}],
+            messages=[{"role": "user", "content": user_content}],
         )
 
         svg_str = response.content[0].text.strip()
 
         # Ensure we only have the SVG (strip any accidental markdown fences)
         if "```" in svg_str:
-            # Extract between code fences if present
             match = re.search(r"<svg[\s\S]*?</svg>", svg_str)
             if match:
                 svg_str = match.group(0)
 
         if not svg_str.startswith("<svg"):
-            # Try to find SVG in the response
             match = re.search(r"<svg[\s\S]*?</svg>", svg_str)
             if match:
                 svg_str = match.group(0)
             else:
                 raise ValueError("Claude response does not contain valid SVG")
+
+        # Inject the actual base64 image data URI in place of placeholder
+        svg_str = svg_str.replace("__IMAGE_DATA_URI__", image_data_uri)
 
         # Step 4: Rasterize with CairoSVG
         png_bytes = cairosvg.svg2png(
