@@ -123,17 +123,16 @@ _SYSTEM_PROMPT = """You are a world-class Meta/Instagram ad creative director an
 
 You will receive:
 - A reference photo (for visual context — layout, negative space, colors, subject position)
-- Pre-embedded @font-face CSS declarations (WOFF2 fonts, already base64 encoded)
 - Ad copy: headline, subheadline, CTA
 - Image description
 
-You must output a SINGLE self-contained HTML document. Output ONLY the HTML. No explanation. No markdown. No code fences. The response must start with <!DOCTYPE html> and end with </html>.
+You must output a SINGLE HTML document. Output ONLY the HTML. No explanation. No markdown. No code fences. The response must start with <!DOCTYPE html> and end with </html>.
 
 HTML TECHNICAL REQUIREMENTS:
 - The document represents a 1080×1350px ad overlay — transparent background, text/scrims only.
 - html and body: width: 1080px; height: 1350px; overflow: hidden; margin: 0; padding: 0; background: transparent;
 - All elements use position: absolute for placement.
-- Include the provided @font-face CSS verbatim inside a <style> block. Do NOT modify or regenerate it.
+- Do NOT include any <style> block or @font-face declarations — fonts are injected automatically.
 - Do NOT reference any external URLs (no Google Fonts CDN, no images, no scripts).
 - Do NOT include any background image or full-canvas background color.
 - The document will be screenshotted by a headless browser at 1:1 pixel ratio. What you write is exactly what renders.
@@ -205,7 +204,7 @@ WHAT MAKES AN AD PROFITABLE VS GENERIC:
 
 def _build_user_content(
     img_b64: str,
-    font_face_css: str,
+    img_media_type: str,
     headline: str,
     subheadline: str,
     cta: str,
@@ -221,10 +220,7 @@ CTA: {cta}
 
 {"PERFORMANCE HINTS: " + performance_hints if performance_hints else ""}
 
-EMBEDDED @font-face CSS (include EXACTLY as-is in your <style> block — do NOT modify or regenerate):
-{font_face_css if font_face_css else "(No fonts pre-embedded. Use font-family names in CSS without @font-face declarations. Do NOT generate any base64 data.)"}
-
-The photo above is your visual reference — analyse negative space, subject position, and color palette to inform layout and color decisions. Do not embed or reference it in the HTML.
+The photo above is your visual reference — analyse negative space, subject position, and color palette to inform layout and color decisions. Do not embed or reference it in the HTML. Do not include any <style> block or font declarations — fonts are injected automatically after your response.
 
 Generate the complete HTML overlay document now."""
 
@@ -233,7 +229,7 @@ Generate the complete HTML overlay document now."""
             "type": "image",
             "source": {
                 "type": "base64",
-                "media_type": "image/png",
+                "media_type": img_media_type,
                 "data": img_b64,
             },
         },
@@ -253,8 +249,7 @@ def _rasterize_html(html: str, width: int = 1080, height: int = 1350) -> bytes:
         browser = pw.chromium.launch(args=["--no-sandbox", "--disable-setuid-sandbox"])
         page = browser.new_page(viewport={"width": width, "height": height})
         # Transparent background so the overlay composites cleanly onto the photo
-        page.set_extra_http_headers({})
-        page.set_content(html, wait_until="networkidle")
+        page.set_content(html, wait_until="load")
         png_bytes = page.screenshot(
             full_page=False,
             omit_background=True,  # transparent PNG
@@ -287,21 +282,27 @@ def render_text_overlay(
     Falls back to the PIL renderer on any error.
     """
     try:
-        # Step 1: Encode base image for Claude vision (reference only — not embedded in output)
+        # Step 1: Encode a downscaled reference image for Claude vision.
+        # Claude only needs layout/color context — 540×675 JPEG ~50KB vs 4MB full PNG.
         rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-        buf = io.BytesIO()
-        Image.fromarray(rgb).save(buf, format="PNG")
-        img_b64 = base64.b64encode(buf.getvalue()).decode()
+        small = Image.fromarray(rgb).resize((540, 675), Image.LANCZOS)
+        buf_small = io.BytesIO()
+        small.save(buf_small, format="JPEG", quality=85)
+        img_b64 = base64.b64encode(buf_small.getvalue()).decode()
+        img_media_type = "image/jpeg"
+        print(f"[HTML_RENDER] Reference image: {len(buf_small.getvalue()):,} bytes (540×675 JPEG)")
 
-        # Step 2: Fetch fonts (cached after first call)
+        # Step 2: Fetch fonts (module-level cache — one network round-trip per process lifetime)
         fonts = _fetch_fonts()
         font_face_css = _build_font_face_css(fonts)
 
-        # Step 3: Ask Claude to generate the HTML overlay
+        # Step 3: Ask Claude to generate the HTML overlay.
+        # Font CSS is NOT sent to Claude — it's injected into the HTML after generation.
+        # This removes ~172 KB of base64 from the prompt, cutting API time dramatically.
         client = anthropic.Anthropic()
         user_content = _build_user_content(
             img_b64=img_b64,
-            font_face_css=font_face_css,
+            img_media_type=img_media_type,
             headline=headline,
             subheadline=subheadline,
             cta=cta,
@@ -311,7 +312,7 @@ def render_text_overlay(
 
         response = client.messages.create(
             model="claude-sonnet-4-20250514",
-            max_tokens=16000,
+            max_tokens=4000,
             system=_SYSTEM_PROMPT,
             messages=[{"role": "user", "content": user_content}],
         )
@@ -331,12 +332,22 @@ def render_text_overlay(
             else:
                 raise ValueError("Claude response does not contain valid HTML")
 
+        # Step 4: Inject @font-face CSS into the HTML before Playwright sees it.
+        # Chromium handles WOFF2 natively in milliseconds — this is where fonts live.
+        if font_face_css:
+            font_style_block = f"<style>\n{font_face_css}\n</style>"
+            if "</head>" in html_str:
+                html_str = html_str.replace("</head>", f"{font_style_block}\n</head>", 1)
+            else:
+                # Fallback: insert after <body> opening tag
+                html_str = html_str.replace("<body", f"{font_style_block}\n<body", 1)
+
         print(f"[HTML_RENDER] HTML payload: {len(html_str):,} bytes — rasterizing with Playwright")
 
-        # Step 4: Rasterize with Playwright (headless Chromium — handles WOFF2 natively, ~1-2s)
+        # Step 5: Rasterize with Playwright (headless Chromium — handles WOFF2 natively, ~1-2s)
         png_bytes = _rasterize_html(html_str, width=1080, height=1350)
 
-        # Step 5: Alpha-composite the transparent overlay onto the original photo
+        # Step 6: Alpha-composite the transparent overlay onto the original photo
         overlay_pil = Image.open(io.BytesIO(png_bytes)).convert("RGBA")
 
         bg_pil = Image.fromarray(rgb).convert("RGBA")
