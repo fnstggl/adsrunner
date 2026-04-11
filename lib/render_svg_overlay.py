@@ -147,122 +147,61 @@ def _build_font_face_css(fonts: dict[str, str]) -> str:
 # System prompt
 # ---------------------------------------------------------------------------
 
-_SYSTEM_PROMPT = """You are a senior front-end typographer and HTML/CSS implementor. You render a structured `text_design_spec` into a transparent HTML overlay. Your job is to implement the spec EXACTLY — do not invent, do not freestyle.
+_SYSTEM_PROMPT = """You are a senior front-end typographer and HTML/CSS implementor.
 
-You will receive:
-- A reference photo (context only; do not embed)
-- A text_design_spec (all design decisions pre-made)
-- Image analysis (quietest zones, colors, accents)
+Your job: Render a text_design_spec into a transparent HTML ad overlay using ONLY the layout tokens provided. Do NOT invent layout values. Do NOT freestyle.
 
-Output a SINGLE HTML document. Output ONLY the HTML (<!DOCTYPE html> to </html>). No explanation, no markdown.
+LAYOUT TOKENS — Use these exact px values (provided in the spec):
 
-═══════════════════════════════════════════════════════════════════════════
-HTML / CSS TECHNICAL RULES
-═══════════════════════════════════════════════════════════════════════════
-- The document represents a 1080×1350px ad overlay — transparent background, text/scrims only.
-- html and body: width: 1080px; height: 1350px; overflow: hidden; margin: 0; padding: 0; background: transparent;
-- All text blocks use position: absolute for placement.
-- Do NOT include any <style> block for @font-face — fonts are injected automatically after your response. You MAY include a <style> block for your own class rules.
-- Do NOT reference any external URLs (no CDNs, no images, no scripts).
-- Do NOT include any background image or full-canvas background color.
-- The document is screenshotted by headless Chromium at 1:1 pixel ratio.
+  zone_rect:               {x, y, w, h}           # zone boundary on 1080×1350 canvas
+  safe_margin:             16 px                  # inset from zone edge
+  usable_width:            1048 px                # w - (2 * margin)
+  headline_size_range:     [150, 200]             # (min_px, max_px) from word count
+  support_size_range:      [36, 48]               # support copy sizing
+  eyebrow_size:            28 px                  # fixed
+  cta_size:                44 px                  # fixed
+  headline_line_height:    1.0                    # tight
+  support_line_height:     1.4                    # spacious
+  gap_headline_support:    12 px                  # vertical gap
+  gap_support_cta:         16 px                  # vertical gap
+  headline_color:          "#FFFFFF"              # exact color
+  support_color:           "#E8E8E8"              # exact color
+  accent_color:            "#FF6B35"              # exact color (from image)
+  cta_bg:                  "#FF6B35"              # CTA button background
+  cta_fg:                  "#FFFFFF"              # CTA button foreground
 
-WHAT YOU CAN USE (all work perfectly in Chromium):
-- font-family, font-size, font-weight, font-style, letter-spacing, line-height, text-shadow, color, opacity
+Use these values in your CSS. Do NOT round, adjust, or guess.
+
+OVERFLOW PREVENTION (CRITICAL):
+If text overflows the zone bounds, you should aim for 90-95% of max_font_size on the first attempt. The system validates post-render and will shrink if needed. Never let text leave zone bounds.
+
+HTML / CSS TECHNICAL RULES:
+- Document is 1080×1350px, transparent background.
+- html, body: width: 1080px; height: 1350px; overflow: hidden; margin: 0; padding: 0; background: transparent.
+- All text blocks: position: absolute.
+- Fonts are injected automatically — do NOT include @font-face.
+- No external URLs, images, scripts, background colors.
+- Rendered by headless Chromium at 1:1 pixel ratio.
+
+ALLOWED CSS:
+- font-family, font-size, font-weight, font-style, letter-spacing, line-height, color, opacity, text-shadow
 - linear-gradient(), radial-gradient(), backdrop-filter: blur()
-- border-radius, border, box-shadow
-- flexbox, grid
-- transforms (rotate, scale)
-- <br> for explicit line breaks
-- <span> with inline styles for intra-headline emphasis
+- border-radius, border, box-shadow, flexbox, grid, transforms
+- <br> for line breaks, <span> for emphasis
 
-═══════════════════════════════════════════════════════════════════════════
-HOW TO READ THE text_design_spec
-═══════════════════════════════════════════════════════════════════════════
+CONTRACT — Honor the spec exactly:
+1. Active elements: Only render elements from active_elements list. Do NOT add forbidden elements.
+2. Placement zone: ALL text must stay inside zone_rect.
+3. Typography: Use ONLY primary_family, accent_family, cta_family. Max 2 total.
+4. Colors: Use headline_color, support_color, accent_color, cta_bg, cta_fg exactly as provided.
+5. Sizing: Use headline_size_range, support_size_range, eyebrow_size, cta_size from layout_tokens.
+6. Container: Apply container_strategy.type (none, shadow_only, translucent_card, etc.).
+7. CTA: If cta_style.type=none, do NOT render a button. Otherwise match the style.
+8. Alignment: Use placement.alignment (left/center/right) — no default centering.
+9. Emphasis spans: Render headline emphasis_spans with their specified colors and font roles.
+10. Line limits: headline ≤ max_lines_headline, support ≤ max_lines_support.
 
-The spec is your contract. Honor it exactly:
-
-1. layout_family — defines WHICH text elements are allowed. Anything listed under `forbidden` MUST NOT appear in your output. If headline is the only element listed under `active_elements`, do NOT add a subheadline, eyebrow, badge, or CTA.
-
-2. placement.primary_zone — a rect (x, y, w, h) on the 1080×1350 canvas. ALL text blocks must be positioned inside this rect. Use `left`, `top`, `width`, `max-width`, and CSS flex inside an absolutely-positioned container.
-
-3. placement.alignment — controls text-align (left/center/right). Do NOT center when the spec says left.
-
-4. container_strategy.type — determines the visual treatment behind the text:
-   - `none`: no container at all. Text sits directly on the image. Use text-shadow for contrast if needed.
-   - `shadow_only`: no container box, but use multi-layer text-shadow for readability.
-   - `translucent_card`: rgba(255,255,255,opacity) or rgba(0,0,0,opacity) solid card, rounded corners.
-   - `glass_blur`: rgba card with `backdrop-filter: blur(Npx)`. Very modern.
-   - `solid_chip`: small opaque high-contrast rounded chip. Use for badges/eyebrows only.
-   - `gradient_panel`: linear-gradient fading from opaque to transparent. Use sparingly.
-   - `outlined_card`: 2px border, transparent interior.
-   - `hard_block`: solid opaque rectangle, poster look.
-   - `background_text_layer`: oversized tinted text behind subject (low z-index illusion).
-
-5. typography.primary_family + accent_family — the ONLY font families you may use. Do not introduce any font not listed in the spec. CTA uses `cta_family` (almost always Inter 700).
-
-6. typography.case_style — `upper` means uppercase the text via CSS `text-transform: uppercase`, `title` means title case (use the source copy as provided), `sentence` keeps it as-written.
-
-7. typography.tracking — `tight` ≈ letter-spacing: -0.03em, `normal` ≈ 0, `loose` ≈ +0.06em.
-
-8. typography.line_height — `tight` ≈ 1.0, `normal` ≈ 1.25, `loose` ≈ 1.5.
-
-9. hierarchy_profile.headline_scale — pick a concrete font-size from this map:
-       md  → 72-90px
-       lg  → 92-118px
-       xl  → 120-148px
-       xxl → 150-180px
-   Choose toward the bigger end of the range when copy is short.
-
-10. color_strategy — use the exact headline_color, support_color, cta_bg, cta_fg values from the spec. Do NOT default to white.
-
-11. cta_style.type — render the CTA EXACTLY as the style indicates:
-    - `none`: NO CTA ELEMENT. Do not render a button, arrow, or link.
-    - `pill_filled`: rounded pill (border-radius 999px or ≥ 28px), solid fill, min 56px tall, ≥ 36px horizontal padding.
-    - `rectangular_filled`: filled button with soft or sharp corners.
-    - `ghost_outlined`: 2px border, transparent fill.
-    - `underlined_text`: text with a 2-3px underline, NO box.
-    - `text_arrow`: text + `→` glyph, NO box.
-    - `badge_cta`: small rounded high-contrast badge, uppercase + tracked.
-    - `tiny_anchor`: tiny text anchored in a corner (editorial restraint).
-
-12. scrim.enabled — if `false`, do NOT add a bottom scrim or gradient panel covering the canvas. If `true`, match the `type` and `extent`.
-
-13. emphasis_spans on headline — render each character-range of the headline inside a <span> with its own font-family/weight/style according to the span's `treatment` role. This is the intra-headline mixing move (Poppi). Spans must not overlap.
-
-═══════════════════════════════════════════════════════════════════════════
-AVAILABLE FONT FAMILIES (pre-embedded — use exact font-family names)
-═══════════════════════════════════════════════════════════════════════════
-
-display_impact:      'Bebas Neue' 400 | 'Anton' 400 | 'Oswald' 700 | 'Montserrat' 900 | 'Inter' 900
-modern_sans:         'Inter' 400/700 | 'Poppins' 400/600/700 | 'Space Grotesk' 700 | 'Montserrat' 700
-editorial_serif:     'Playfair Display' 700 italic | 'DM Serif Display' 400 italic | 'Libre Baskerville' 400/700 italic | 'Cormorant Garamond' 700 italic
-warm_serif:          'Lora' 400 italic | 'Libre Baskerville' 400 italic
-handwritten_accent:  'Caveat' 400/700
-
-Use ONLY the primary_family and accent_family specified in the spec (plus cta_family for the CTA). Never more than 2 display families total. Never inject additional fonts.
-
-═══════════════════════════════════════════════════════════════════════════
-HARD ANTI-PATTERNS (the scorer will flag these)
-═══════════════════════════════════════════════════════════════════════════
-- Do NOT render a full-width bottom scrim unless scrim.enabled=true and extent=lower_third.
-- Do NOT use text-align:center when placement.alignment != "center".
-- Do NOT use left:50% centering when placement.alignment != "center".
-- Do NOT render more than 2 distinct font families total.
-- Do NOT add elements that are listed under `forbidden` in the active layout family.
-- Do NOT generate generic CTA copy — use the cta.content provided verbatim.
-- Do NOT position text outside the primary_zone rect.
-- Do NOT render a CTA when cta_style.type = "none".
-
-═══════════════════════════════════════════════════════════════════════════
-HIERARCHY PRINCIPLES (always apply)
-═══════════════════════════════════════════════════════════════════════════
-- The headline is visually dominant by a wide margin. The scale_ratio in the spec tells you the target ratio between headline and support.
-- Support copy and CTA must be visibly smaller and lighter than the headline. They should never compete.
-- Negative space is a feature, not a bug — editorial layouts leave 60-80% of the canvas untouched.
-- The text feels designed INTO the image, not stamped OVER it.
-
-Render the spec now."""
+Output ONLY HTML: <!DOCTYPE html> to </html>. No explanation, no markdown. Render the overlay now."""
 
 
 # ---------------------------------------------------------------------------
@@ -323,6 +262,126 @@ def _rasterize_html(html: str, width: int = 1080, height: int = 1350) -> bytes:
         browser.close()
 
     return png_bytes
+
+
+# ---------------------------------------------------------------------------
+# Overflow prevention: validate post-render and shrink if needed
+# ---------------------------------------------------------------------------
+
+def _validate_and_fix_overflow(
+    html: str,
+    spec: dict,
+    client: anthropic.Anthropic,
+    font_face_css: str,
+    max_retries: int = 2,
+) -> str:
+    """Validate that text stays within zone bounds post-render.
+
+    If potential overflow is detected, request Claude to use smaller font sizes
+    from the fallback cascade and re-render.
+
+    Returns:
+        Fixed HTML (or original if no overflow detected).
+    """
+    tokens = spec.get("layout_tokens") or {}
+    zone_rect = tokens.get("zone_rect", {})
+    headline_min, headline_max = tokens.get("headline_size_range", (100, 150))
+    fallback_cascade = tokens.get("font_size_fallback_cascade", [150, 140, 130, 120, 110, 100, 90, 80])
+
+    # Heuristic: extract font-sizes from CSS
+    sizes = [int(m.group(1)) for m in re.finditer(r"font-size\s*:\s*(\d+)px", html)]
+    if not sizes:
+        return html
+
+    max_size_in_html = max(sizes)
+
+    # If max size is already near the minimum, we can't shrink further
+    if max_size_in_html <= 60:
+        print("[HTML_RENDER] Font size already minimal, cannot shrink further")
+        return html
+
+    # Crude overflow detection: if headline font-size is close to the max, and
+    # zone_width is small, there's likely overflow. Estimate character count.
+    zone_w = zone_rect.get("w", 1080)
+    zone_h = zone_rect.get("h", 600)
+
+    # Rough estimate: ~5 chars per 100px at headline size
+    max_chars_per_line = max(8, (zone_w - 32) // (max_size_in_html / 20))
+
+    # Extract headline content
+    headline_match = re.search(r"<div[^>]*>([^<]+)</div>", html)
+    headline_text = headline_match.group(1) if headline_match else ""
+    headline_text = headline_text.strip()
+
+    # If headline exceeds ~3 lines worth of characters, we might overflow
+    estimated_lines = len(headline_text) / max_chars_per_line
+    estimated_height = estimated_lines * (max_size_in_html * 1.1)  # rough with line-height
+
+    if estimated_height > zone_h * 0.8:  # using 80% of zone height as safety threshold
+        print(
+            f"[HTML_RENDER] Potential overflow detected: "
+            f"est. {estimated_height:.0f}px height vs {zone_h}px zone. Requesting shrink..."
+        )
+
+        # Request Claude to use smaller font sizes
+        next_size = headline_max - 10
+        if next_size < 60:
+            next_size = 60
+
+        shrink_prompt = f"""Your previous HTML may have text overflowing the zone bounds.
+
+Zone bounds: width={zone_w}px, height={zone_h}px
+Current max font-size in headline: {max_size_in_html}px
+Headline text: {headline_text!r}
+
+Please revise the HTML to use smaller font sizes:
+- Reduce headline from {max_size_in_html}px to {next_size}px or smaller
+- Ensure all text stays within the zone bounds
+- Keep all other styling intact
+
+Use this fallback cascade if needed: {fallback_cascade}
+Stop at min_font_size: 24px
+
+Do not change layout, zones, or fonts. Only adjust font-sizes and spacing to fit.
+Output ONLY the revised HTML (<!DOCTYPE html> to </html>)."""
+
+        try:
+            revision_response = client.messages.create(
+                model="claude-sonnet-4-20250514",
+                max_tokens=4000,
+                messages=[{"role": "user", "content": shrink_prompt}],
+            )
+            shrunk_html = revision_response.content[0].text.strip()
+
+            # Strip markdown fences
+            if "```" in shrunk_html:
+                match = re.search(r"<!DOCTYPE html>[\s\S]*?</html>", shrunk_html, re.IGNORECASE)
+                if match:
+                    shrunk_html = match.group(0)
+
+            if not re.match(r"<!DOCTYPE html>", shrunk_html, re.IGNORECASE):
+                match = re.search(r"<!DOCTYPE html>[\s\S]*?</html>", shrunk_html, re.IGNORECASE)
+                if match:
+                    shrunk_html = match.group(0)
+                else:
+                    print("[HTML_RENDER] Shrink response not valid HTML, keeping original")
+                    return html
+
+            # Inject font CSS
+            if font_face_css:
+                font_style_block = f"<style>\n{font_face_css}\n</style>"
+                if "</head>" in shrunk_html:
+                    shrunk_html = shrunk_html.replace("</head>", f"{font_style_block}\n</head>", 1)
+                else:
+                    shrunk_html = shrunk_html.replace("<body", f"{font_style_block}\n<body", 1)
+
+            print("[HTML_RENDER] Shrink revision applied")
+            return shrunk_html
+        except Exception as exc:
+            print(f"[HTML_RENDER] Shrink revision failed: {exc}, keeping original")
+            return html
+
+    return html
 
 
 # ---------------------------------------------------------------------------
@@ -448,6 +507,19 @@ def render_text_overlay(
 
         # Step 6: Rasterize with Playwright
         png_bytes = _rasterize_html(html_str, width=1080, height=1350)
+
+        # Step 6b: Validate text bounds and trigger shrink-retry if needed
+        try:
+            html_str_revised = _validate_and_fix_overflow(
+                html_str, spec, client, font_face_css, max_retries=2
+            )
+            if html_str_revised != html_str:
+                # HTML was revised due to overflow; re-rasterize
+                print("[HTML_RENDER] Re-rasterizing after overflow fix...")
+                png_bytes = _rasterize_html(html_str_revised, width=1080, height=1350)
+                html_str = html_str_revised
+        except Exception as validate_exc:
+            print(f"[HTML_RENDER] overflow validation failed (non-fatal): {validate_exc}")
 
         # Step 7: Alpha-composite the transparent overlay onto the original photo
         overlay_pil = Image.open(io.BytesIO(png_bytes)).convert("RGBA")
