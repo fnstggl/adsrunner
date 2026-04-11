@@ -255,32 +255,95 @@ Return structured JSON that specifies:
 
 This intent will be validated against family rules, then the system generates the final HTML/CSS deterministically.
 
-Requirements:
-1. Honor the layout families — each has rules about what elements are allowed
-2. Match typography roles to the tone (performance_ugc needs snappy, editorial needs thoughtful)
-3. Respect zone constraints (all text must fit in chosen zone)
-4. Choose headline_scale based on text length and available space
-5. CTA is optional; only include if it fits family rules
-6. Emphasis is sparse — color or weight, not both
-7. Container defaults to "none" for maximum clarity (override only if needed)
-8. Use accent color sparingly (eyebrow only, or eyebrow+emphasis, never everything)
-9. Alignment: center for hero families, left/right for editorial families
-10. Density reflects the amount of text (minimal for 1-2 lines, dense for 5+ lines)
+CRITICAL CONSTRAINTS — Each family has strict rules. You MUST follow them:
 
-Composition families available:
-- hero_statement: Bold headline, no CTA, max negative space
-- hero_with_cta: Bold headline + optional support + CTA
-- editorial_side_stack: Headline + support stacked, small CTA to side
-- direct_response_stack: Headline + support + CTA stacked vertically
-- pain_point_fragments: Multiple small text blocks
-- question_hook: Q + A format
-- testimonial_quote: Quote + attribution
-- offer_badge_headline: Badge + headline + CTA
-- poster_background_headline: Big faded text behind small foreground
-- soft_card_overlay: All in soft-edged card
-- split_message_cta: Two-column (message | CTA)
-- minimal_product_led: Tiny text, 80% negative space
-- utility_explainer: Inline callouts
+hero_statement:
+  - Zones: center, top_center, bottom_center
+  - CTA styles: none (NO CTA allowed)
+  - Required: headline
+  - Optional: eyebrow, support_copy
+
+hero_with_cta:
+  - Zones: bottom_center, lower_third, center
+  - CTA styles: pill_filled, rectangular_filled, ghost_outlined
+  - Required: headline, cta
+  - Optional: eyebrow, support_copy
+
+editorial_side_stack:
+  - Zones: center, top_center, bottom_center
+  - CTA styles: text_arrow, underlined_text, tiny_anchor, none
+  - Required: headline
+  - Optional: eyebrow, support_copy, cta
+
+direct_response_stack:
+  - Zones: bottom_center, lower_third, center
+  - CTA styles: pill_filled, rectangular_filled, ghost_outlined, text_arrow, none
+  - Required: headline
+  - Optional: eyebrow, support_copy, cta
+
+pain_point_fragments:
+  - Zones: center, bottom_center
+  - CTA styles: text_arrow, none
+  - Required: headline
+  - Optional: eyebrow, support_copy, cta
+
+question_hook:
+  - Zones: center, bottom_center
+  - CTA styles: pill_filled, text_arrow, none
+  - Required: headline
+  - Optional: support_copy, cta
+
+testimonial_quote:
+  - Zones: center, bottom_center
+  - CTA styles: none (NO CTA allowed)
+  - Required: headline
+  - Optional: support_copy
+
+offer_badge_headline:
+  - Zones: bottom_center, center
+  - CTA styles: pill_filled, rectangular_filled
+  - Required: headline, cta
+  - Optional: eyebrow, support_copy
+
+poster_background_headline:
+  - Zones: center, bottom_center
+  - CTA styles: none (NO CTA allowed)
+  - Required: headline
+  - Optional: support_copy
+
+soft_card_overlay:
+  - Zones: center, bottom_center
+  - CTA styles: pill_filled, ghost_outlined, none
+  - Required: headline
+  - Optional: eyebrow, support_copy, cta
+
+split_message_cta:
+  - Zones: center, bottom_center
+  - CTA styles: pill_filled, rectangular_filled
+  - Required: headline, cta
+  - Optional: support_copy
+
+minimal_product_led:
+  - Zones: center, bottom_center, bottom_right
+  - CTA styles: none (NO CTA allowed)
+  - Required: headline
+  - Optional: support_copy
+
+utility_explainer:
+  - Zones: center, top_center
+  - CTA styles: none (NO CTA allowed)
+  - Required: headline
+  - Optional: support_copy
+
+General Requirements:
+1. Pick a layout_family FIRST, then only use valid zones/CTA styles for that family
+2. Match typography roles to the tone (performance_ugc needs snappy, editorial needs thoughtful)
+3. Choose headline_scale based on text length and available space
+4. Emphasis is sparse — color or weight, not both
+5. Container defaults to "none" for maximum clarity (override only if needed)
+6. Use accent color sparingly (eyebrow only, or eyebrow+emphasis, never everything)
+7. Alignment: center for hero families, left/right for editorial families
+8. Density reflects the amount of text (minimal for 1-2 lines, dense for 5+ lines)
 
 Submit your layout intent as JSON using the provided tool."""
 
