@@ -147,14 +147,14 @@ def _build_font_face_css(fonts: dict[str, str]) -> str:
 # System prompt
 # ---------------------------------------------------------------------------
 
-_SYSTEM_PROMPT = """You are a senior front-end typographer and HTML/CSS implementor for Meta/Instagram ad overlays. You render a structured `text_design_spec` into a transparent HTML overlay. You do NOT invent copy, layout families, placement, container, typography, color mode, or CTA style — those have already been decided upstream and are handed to you as a spec. Your job is to render the spec faithfully as beautiful, editorial-quality HTML/CSS.
+_SYSTEM_PROMPT = """You are a senior front-end typographer and HTML/CSS implementor. You render a structured `text_design_spec` into a transparent HTML overlay. Your job is to implement the spec EXACTLY — do not invent, do not freestyle.
 
 You will receive:
-- A reference photo (for fine-grained negative-space and color context)
-- A fully resolved text_design_spec (layout family, placement zone rect, container, typography roles, color strategy, cta_style, scrim)
-- Deterministic image analysis (quietest zones, dominant hue, palette, suggested text color)
+- A reference photo (context only; do not embed)
+- A text_design_spec (all design decisions pre-made)
+- Image analysis (quietest zones, colors, accents)
 
-You must output a SINGLE HTML document. Output ONLY the HTML. No explanation. No markdown. No code fences. The response must start with <!DOCTYPE html> and end with </html>.
+Output a SINGLE HTML document. Output ONLY the HTML (<!DOCTYPE html> to </html>). No explanation, no markdown.
 
 ═══════════════════════════════════════════════════════════════════════════
 HTML / CSS TECHNICAL RULES
@@ -437,12 +437,14 @@ def render_text_overlay(
         except Exception as dbg_exc:
             print(f"[HTML_RENDER] Debug write failed (non-fatal): {dbg_exc}")
 
-        # Step 5c: Deterministic scoring (log-only, no revision)
+        # Step 5c: Deterministic scoring + revision if needed
         try:
             score = _score_html(html_str, spec)
             print(f"[HTML_RENDER] score={score['generic_ai_risk']} warnings={score['warnings']}")
+            # If score is too high, request a revision pass
+            html_str = _revise_html_if_needed(html_str, spec, score, client, font_face_css)
         except Exception as score_exc:
-            print(f"[HTML_RENDER] scoring failed (non-fatal): {score_exc}")
+            print(f"[HTML_RENDER] scoring/revision failed (non-fatal): {score_exc}")
 
         # Step 6: Rasterize with Playwright
         png_bytes = _rasterize_html(html_str, width=1080, height=1350)
@@ -581,6 +583,73 @@ def _available_families(fonts: dict[str, str]) -> list[str]:
                 seen.add(fam)
                 out.append(fam)
     return out
+
+
+def _revise_html_if_needed(
+    html: str,
+    spec: dict,
+    score: dict,
+    client: anthropic.Anthropic,
+    font_face_css: str,
+) -> str:
+    """If generic_ai_risk > 40, call Claude again to fix the HTML."""
+    if score["generic_ai_risk"] <= 40:
+        return html
+
+    print(f"[HTML_RENDER] generic_ai_risk={score['generic_ai_risk']} > 40, requesting revision...")
+    warnings_str = "\n".join(f"- {w}" for w in score["warnings"])
+    revision_prompt = f"""You previously generated HTML for an ad overlay. The quality review flagged these issues:
+
+{warnings_str}
+
+The HTML risks looking generic or auto-made.
+
+Here is your previous HTML:
+<html>
+{html}
+</html>
+
+Requirements for revision:
+1. Honor the text_design_spec exactly (do not change layout, zones, fonts).
+2. Fix the flagged issues above.
+3. Make the output feel more editorial, intentional, professional.
+4. Ensure hierarchy is extreme (headline 4-5x larger than support).
+5. Ensure typography contrasts (if headline is large + bold, support is noticeably smaller + lighter).
+6. Avoid centered-default patterns unless explicitly required.
+7. Use the specified colors, accent color, and emphasis spans exactly.
+8. Output ONLY the revised HTML (<!DOCTYPE html> to </html>). No explanation.
+
+Revise the HTML now."""
+
+    revision_response = client.messages.create(
+        model="claude-sonnet-4-20250514",
+        max_tokens=4000,
+        messages=[{"role": "user", "content": revision_prompt}],
+    )
+    revised_html = revision_response.content[0].text.strip()
+
+    # Strip markdown fences
+    if "```" in revised_html:
+        match = re.search(r"<!DOCTYPE html>[\s\S]*?</html>", revised_html, re.IGNORECASE)
+        if match:
+            revised_html = match.group(0)
+
+    if not re.match(r"<!DOCTYPE html>", revised_html, re.IGNORECASE):
+        match = re.search(r"<!DOCTYPE html>[\s\S]*?</html>", revised_html, re.IGNORECASE)
+        if match:
+            revised_html = match.group(0)
+
+    if font_face_css:
+        font_style_block = f"<style>\n{font_face_css}\n</style>"
+        if "</head>" in revised_html:
+            revised_html = revised_html.replace("</head>", f"{font_style_block}\n</head>", 1)
+        else:
+            revised_html = revised_html.replace("<body", f"{font_style_block}\n<body", 1)
+
+    print(f"[HTML_RENDER] Revision complete, re-scoring...")
+    revised_score = _score_html(revised_html, spec)
+    print(f"[HTML_RENDER] revised score={revised_score['generic_ai_risk']}")
+    return revised_html
 
 
 def _score_html(html: str, spec: dict) -> dict:

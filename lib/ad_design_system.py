@@ -505,6 +505,47 @@ QUALITY_TARGETS: dict[str, list[str]] = {
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# TYPOGRAPHY SIZING — aggressive, word-count-driven
+# ─────────────────────────────────────────────────────────────────────────────
+
+def headline_font_size_range(word_count: int) -> tuple[int, int]:
+    """Return aggressive font-size range (min, max) px based on headline word count.
+
+    Short headlines get huge sizes to dominate the frame.
+    Longer headlines get smaller but still impactful.
+    """
+    if word_count <= 3:
+        return (170, 220)  # tiny copy → absolute dominance
+    elif word_count <= 5:
+        return (160, 200)  # short → very large
+    elif word_count <= 8:
+        return (110, 140)  # medium → solid presence
+    elif word_count <= 12:
+        return (90, 120)   # longer → still impactful
+    else:
+        return (80, 110)   # long copy → but never wimpy
+
+
+def eyebrow_font_size() -> int:
+    """Fixed eyebrow size in px. Always small, always tracked."""
+    return 28  # 28-32px range, strictly enforced
+
+
+def support_copy_font_size(headline_scale: str) -> tuple[int, int]:
+    """Support copy should be ~1/3 to 1/5 of headline size.
+
+    Returns range (min, max) px.
+    """
+    # Map headline_scale -> a representative headline size
+    # Then calculate support as a fraction
+    headline_sizes = {"md": 75, "lg": 95, "xl": 130, "xxl": 175}
+    hl_size = headline_sizes.get(headline_scale, 100)
+    support_min = max(32, int(hl_size / 4.5))
+    support_max = int(hl_size / 3)
+    return (support_min, support_max)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # VALIDATOR
 # ─────────────────────────────────────────────────────────────────────────────
 
