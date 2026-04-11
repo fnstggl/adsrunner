@@ -2,6 +2,13 @@
 
 Headline + support + CTA stacked vertically.
 Perfect for performance marketing, e-commerce, simple offers.
+
+Typography mathematics:
+- Headline: 150-200px, tight line-height (1.0), max-width controlled
+- Support: 32-48px, spacious line-height (1.4), same max-width as headline
+- Spacing: Determined by layout tokens (gap_headline_support, gap_support_cta)
+- Alignment: Respects intent placement alignment
+- Measure: ~65 chars optimal per line (prevents awkward wrapping)
 """
 
 from __future__ import annotations
@@ -31,33 +38,94 @@ class DirectResponseStackEngine(CompositionEngine):
     default_container_type = "none"
 
     def render(self) -> str:
-        """Generate HTML for direct response stack."""
+        """Generate HTML for direct response stack with proper typography."""
         left, top, right, bottom = self._get_safe_inset()
-        zone = self._get_zone_rect()
         usable_width = self.tokens.get("usable_width", 1000)
+        alignment = self._get_alignment_css()
 
-        alignment = self.intent.get("placement", {}).get("alignment", "center")
-        text_align = "center" if alignment == "center" else "left"
+        # Get typography values from tokens
+        hl_min, hl_max = self.tokens.get("headline_size_range", (100, 150))
+        sup_min, sup_max = self.tokens.get("support_size_range", (32, 48))
+        hl_line_height = self.tokens.get("headline_line_height", 1.0)
+        sup_line_height = self.tokens.get("support_line_height", 1.4)
+        gap_hl_sup = self.tokens.get("gap_headline_support", 12)
+        gap_sup_cta = self.tokens.get("gap_support_cta", 16)
 
-        # Build content blocks
+        # Calculate optimal max-width for readable text
+        # At hl_max font size, estimate character width and constrain to ~65 chars
+        max_text_width = self._calculate_max_text_width(hl_max, optimal_chars=65)
+
+        # Get colors and fonts
+        hl_color = self._get_headline_color()
+        sup_color = self._get_support_color()
+        hl_role = self.intent.get("typography", {}).get("headline_role", "display_impact")
+        sup_role = self.intent.get("typography", {}).get("support_role", "modern_sans")
+        hl_font = self._get_font_for_role(hl_role)
+        sup_font = self._get_font_for_role(sup_role)
+
         blocks = []
 
-        # Eyebrow
+        # Eyebrow (optional)
         eyebrow_content = self.text_elements.get("eyebrow", {}).get("content", "")
         if eyebrow_content:
-            blocks.append(self._render_eyebrow(eyebrow_content))
+            eyebrow_size = self.tokens.get("eyebrow_size", 28)
+            accent_color = self._get_accent_color()
+            eyebrow_html = f"""<div style="
+                font-family: {sup_font};
+                font-size: {eyebrow_size}px;
+                font-weight: 600;
+                color: {accent_color};
+                text-transform: uppercase;
+                letter-spacing: 0.05em;
+                margin-bottom: {gap_hl_sup}px;
+                text-align: {alignment};
+            ">
+                {eyebrow_content}
+            </div>"""
+            blocks.append(eyebrow_html)
 
-        # Headline (required)
+        # Headline (required) WITH PROPER LAYOUT CONTROL
         headline_content = self.text_elements.get("headline", {}).get("content", "")
         lines = self.text_elements.get("headline", {}).get("lines", [])
-        blocks.append(self._render_headline(headline_content, lines))
 
-        # Support copy
+        if lines:
+            # Respect semantic line breaks from intent
+            line_html = "<br>".join(f"<span>{line}</span>" for line in lines)
+        else:
+            line_html = headline_content
+
+        headline_html = f"""<div style="
+            font-family: {hl_font};
+            font-size: {hl_max}px;
+            font-weight: 700;
+            line-height: {hl_line_height};
+            color: {hl_color};
+            max-width: {max_text_width}px;
+            margin: 0 auto {gap_hl_sup}px;
+            text-align: {alignment};
+        ">
+            {line_html}
+        </div>"""
+        blocks.append(headline_html)
+
+        # Support copy (optional) WITH PROPER LAYOUT CONTROL
         support_content = self.text_elements.get("support_copy", {}).get("content", "")
         if support_content:
-            blocks.append(self._render_support_copy(support_content))
+            support_html = f"""<div style="
+                font-family: {sup_font};
+                font-size: {sup_max}px;
+                font-weight: 400;
+                line-height: {sup_line_height};
+                color: {sup_color};
+                max-width: {max_text_width}px;
+                margin: 0 auto {gap_sup_cta}px;
+                text-align: {alignment};
+            ">
+                {support_content}
+            </div>"""
+            blocks.append(support_html)
 
-        # CTA
+        # CTA (optional)
         cta_content = self.text_elements.get("cta", {}).get("content", "")
         cta_style = self.intent.get("cta_intent", {}).get("style", "none")
         if cta_content and cta_style != "none":
@@ -71,7 +139,7 @@ class DirectResponseStackEngine(CompositionEngine):
             left: {left}px;
             top: {top}px;
             width: {usable_width}px;
-            text-align: {text_align};
+            text-align: {alignment};
             {container_css}
         ">
             {inner_html}

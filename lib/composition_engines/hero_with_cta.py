@@ -1,6 +1,7 @@
 """Hero with CTA composition engine.
 
 Large headline + optional support + prominent CTA.
+Balanced composition with clear action.
 """
 
 from __future__ import annotations
@@ -22,29 +23,90 @@ class HeroWithCtaEngine(CompositionEngine):
     default_container_type = "none"
 
     def render(self) -> str:
-        """Generate HTML for hero with CTA."""
+        """Generate HTML for hero with CTA using proper typography."""
         left, top, right, bottom = self._get_safe_inset()
-        zone = self._get_zone_rect()
         usable_width = self.tokens.get("usable_width", 1000)
+
+        # Typography values
+        hl_min, hl_max = self.tokens.get("headline_size_range", (100, 150))
+        sup_min, sup_max = self.tokens.get("support_size_range", (32, 48))
+        hl_line_height = self.tokens.get("headline_line_height", 1.0)
+        sup_line_height = self.tokens.get("support_line_height", 1.4)
+        gap_hl_sup = self.tokens.get("gap_headline_support", 12)
+        gap_sup_cta = self.tokens.get("gap_support_cta", 16)
+
+        max_text_width = self._calculate_max_text_width(hl_max, optimal_chars=60)
+
+        # Get colors and fonts
+        hl_color = self._get_headline_color()
+        sup_color = self._get_support_color()
+        hl_role = self.intent.get("typography", {}).get("headline_role", "display_impact")
+        sup_role = self.intent.get("typography", {}).get("support_role", "modern_sans")
+        hl_font = self._get_font_for_role(hl_role)
+        sup_font = self._get_font_for_role(sup_role)
 
         blocks = []
 
         # Eyebrow
         eyebrow_content = self.text_elements.get("eyebrow", {}).get("content", "")
         if eyebrow_content:
-            blocks.append(self._render_eyebrow(eyebrow_content))
+            eyebrow_size = self.tokens.get("eyebrow_size", 28)
+            accent_color = self._get_accent_color()
+            eyebrow_html = f"""<div style="
+                font-family: {sup_font};
+                font-size: {eyebrow_size}px;
+                font-weight: 600;
+                color: {accent_color};
+                text-transform: uppercase;
+                letter-spacing: 0.05em;
+                margin-bottom: {gap_hl_sup}px;
+                text-align: center;
+            ">
+                {eyebrow_content}
+            </div>"""
+            blocks.append(eyebrow_html)
 
-        # Headline (required, large)
+        # Headline
         headline_content = self.text_elements.get("headline", {}).get("content", "")
         lines = self.text_elements.get("headline", {}).get("lines", [])
-        blocks.append(self._render_headline(headline_content, lines))
 
-        # Support copy (optional)
+        if lines:
+            line_html = "<br>".join(f"<span>{line}</span>" for line in lines)
+        else:
+            line_html = headline_content
+
+        headline_html = f"""<div style="
+            font-family: {hl_font};
+            font-size: {hl_max}px;
+            font-weight: 700;
+            line-height: {hl_line_height};
+            color: {hl_color};
+            max-width: {max_text_width}px;
+            margin: 0 auto {gap_hl_sup}px;
+            text-align: center;
+        ">
+            {line_html}
+        </div>"""
+        blocks.append(headline_html)
+
+        # Support copy
         support_content = self.text_elements.get("support_copy", {}).get("content", "")
         if support_content:
-            blocks.append(self._render_support_copy(support_content))
+            support_html = f"""<div style="
+                font-family: {sup_font};
+                font-size: {sup_max}px;
+                font-weight: 400;
+                line-height: {sup_line_height};
+                color: {sup_color};
+                max-width: {max_text_width}px;
+                margin: 0 auto {gap_sup_cta}px;
+                text-align: center;
+            ">
+                {support_content}
+            </div>"""
+            blocks.append(support_html)
 
-        # CTA (required)
+        # CTA
         cta_content = self.text_elements.get("cta", {}).get("content", "")
         cta_style = self.intent.get("cta_intent", {}).get("style", "pill_filled")
         blocks.append(self._render_cta(cta_content, cta_style))

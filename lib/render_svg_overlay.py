@@ -398,14 +398,13 @@ def render_text_overlay(
         if not ok:
             print(f"[HTML_RENDER] spec violations (rendering anyway): {violations}")
 
-        # Step 3: Fetch fonts (module-level cache)
-        fonts = _fetch_fonts()
-        font_face_css = _build_font_face_css(fonts)
-        available_families = _available_families(fonts)
+        # Step 3: Fetch fonts (module-level cache) — all fonts available
+        all_fonts = _fetch_fonts()
 
         # Step 4: NEW ARCHITECTURE: Get layout intent from Claude (JSON, not HTML)
         from lib.generate_layout_intent import generate_layout_intent
         from lib.generate_html_from_intent import generate_html_from_intent
+        from lib.composition_engines import get_engine_class
 
         client = anthropic.Anthropic()
         product_description = headline or subheadline or cta or "Product"
@@ -436,6 +435,29 @@ def render_text_overlay(
             image_analysis=analysis,
         )
         print(f"[HTML_RENDER] Generated HTML from intent ({len(html_str)} bytes)")
+
+        # Step 4d: FONT FILTERING — Only fetch/inject fonts the engine actually uses
+        try:
+            engine_class = get_engine_class(intent.get("layout_family", "direct_response_stack"))
+            temp_engine = engine_class(intent, spec.get("layout_tokens", {}), text_elements, analysis)
+            required_font_names = temp_engine.get_required_fonts()
+            print(f"[HTML_RENDER] Required fonts: {required_font_names}")
+
+            # Filter to only the fonts we need
+            filtered_fonts = {}
+            for font_key, font_b64 in all_fonts.items():
+                for entry in _FONT_FACE_MAP:
+                    if entry["family"] in required_font_names and font_key == entry["key"]:
+                        filtered_fonts[font_key] = font_b64
+                        break
+
+            font_face_css = _build_font_face_css(filtered_fonts)
+            available_families = _available_families(filtered_fonts)
+            print(f"[HTML_RENDER] Injecting {len(filtered_fonts)} fonts (filtered from {len(all_fonts)} available)")
+        except Exception as font_filter_exc:
+            print(f"[HTML_RENDER] Font filtering failed, using all fonts: {font_filter_exc}")
+            font_face_css = _build_font_face_css(all_fonts)
+            available_families = _available_families(all_fonts)
 
         # Step 5: Inject @font-face CSS into <head> before Playwright renders.
         if font_face_css:
