@@ -271,3 +271,44 @@ class CompositionEngine(ABC):
         role_info = TYPOGRAPHY_ROLES.get(role, {})
         fonts = role_info.get("fonts", ["Inter"])
         return f"'{fonts[0]}'"
+
+    def get_required_fonts(self) -> list[str]:
+        """Return the exact font names this engine will use.
+
+        Enables font system to only fetch/inject fonts that are actually needed.
+        """
+        headline_role = self.intent.get("typography", {}).get("headline_role", "display_impact")
+        support_role = self.intent.get("typography", {}).get("support_role", "modern_sans")
+        cta_role = self.intent.get("typography", {}).get("cta_font_role", "modern_sans")
+
+        headline_font = self._get_font_for_role(headline_role).strip("'")
+        support_font = self._get_font_for_role(support_role).strip("'")
+        cta_font = self._get_font_for_role(cta_role).strip("'")
+
+        # Return unique fonts only (max 2-3)
+        return list(set([headline_font, support_font, cta_font]))
+
+    def _calculate_max_text_width(self, font_size: int, optimal_chars: int = 65) -> int:
+        """Calculate optimal max-width for readable text measure.
+
+        Based on professional typography:
+        - Optimal line length: 45-75 characters
+        - Character width estimate: font_size * 0.6
+        - Max width = char_width * optimal_chars, capped at usable_width
+
+        Args:
+            font_size: Font size in px
+            optimal_chars: Target character count per line (default 65)
+
+        Returns:
+            Max width in px, never exceeding usable_width
+        """
+        usable_width = self.tokens.get("usable_width", 1000)
+        char_width = font_size * 0.6  # Rough estimate for monospace-ish rendering
+        max_text_width = int(char_width * optimal_chars)
+        return min(usable_width, max(max_text_width, 200))  # Floor at 200px
+
+    def _get_alignment_css(self) -> str:
+        """Get text-align value from intent placement."""
+        alignment = self.intent.get("placement", {}).get("alignment", "center")
+        return "center" if alignment == "center" else alignment
