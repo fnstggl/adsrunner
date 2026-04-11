@@ -1,0 +1,19 @@
+version: '3.8'
+
+services:
+  adsrunner:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: adsrunner-dev
+    volumes:
+      - .:/app
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+    environment:
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - DISPLAY=${DISPLAY:-:0}
+      - PYTHONUNBUFFERED=1
+    working_dir: /app
+    stdin_open: true
+    tty: true
+    command: /bin/bash
