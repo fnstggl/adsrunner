@@ -75,9 +75,14 @@ class HeroWithCtaEngine(CompositionEngine):
         else:
             line_html = headline_content
 
+        # Calculate responsive font size based on headline length
+        responsive_hl_size = self._calculate_responsive_font_size(
+            headline_content, hl_min, hl_max, lines
+        )
+
         headline_html = f"""<div style="
             font-family: {hl_font};
-            font-size: {hl_max}px;
+            font-size: {responsive_hl_size}px;
             font-weight: 700;
             line-height: {hl_line_height};
             color: {hl_color};
