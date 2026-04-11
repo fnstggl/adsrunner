@@ -86,6 +86,7 @@ DEFAULT_SPEC: dict[str, Any] = {
         "max_opacity": 0.0,
     },
     "image_analysis":   None,  # filled in by merge_image_analysis
+    "layout_tokens":    None,  # filled in by compute_layout_tokens in merge_image_analysis
     "quality_targets":  ads.QUALITY_TARGETS,
 }
 
@@ -171,6 +172,8 @@ def validate(spec: dict) -> tuple[bool, list[str]]:
 
 
 def merge_image_analysis(spec: dict, analysis: dict) -> dict:
+    from . import layout_tokens as lt
+
     spec = dict(spec)
     spec["image_analysis"] = analysis
 
@@ -223,6 +226,12 @@ def merge_image_analysis(spec: dict, analysis: dict) -> dict:
         elif quietest:
             placement["primary_zone"] = quietest[0]
     spec["placement"] = placement
+
+    # Compute layout tokens based on design context and image analysis
+    hierarchy_scale = spec.get("hierarchy_profile", {}).get("headline_scale", "xl")
+    zone = placement.get("primary_zone", "lower_third")
+    tokens = lt.compute_layout_tokens(lf, zone, hierarchy_scale, spec, analysis)
+    spec["layout_tokens"] = tokens
 
     return spec
 
@@ -352,6 +361,28 @@ def to_prompt_directive(spec: dict) -> str:
         lines.append(f"  quietest_zones:     {analysis.get('quietest_zones')}")
         lines.append(f"  busiest_zones:      {analysis.get('busiest_zones')}")
         lines.append(f"  suggested_text_clr: {analysis.get('suggested_text_color')}")
+        lines.append("")
+
+    # Include layout tokens
+    tokens = spec.get("layout_tokens") or {}
+    if tokens:
+        lines.append("── LAYOUT TOKENS (use these exact px values) ──")
+        lines.append(f"  zone_rect:              {tokens.get('zone_rect')}")
+        lines.append(f"  safe_margin:            {tokens.get('safe_margin')} px")
+        lines.append(f"  usable_width:           {tokens.get('usable_width')} px")
+        lines.append(f"  headline_size_range:    {tokens.get('headline_size_range')}")
+        lines.append(f"  support_size_range:     {tokens.get('support_size_range')}")
+        lines.append(f"  eyebrow_size:           {tokens.get('eyebrow_size')} px")
+        lines.append(f"  cta_size:               {tokens.get('cta_size')} px")
+        lines.append(f"  headline_line_height:   {tokens.get('headline_line_height')}")
+        lines.append(f"  support_line_height:    {tokens.get('support_line_height')}")
+        lines.append(f"  gap_headline_support:   {tokens.get('gap_headline_support')} px")
+        lines.append(f"  gap_support_cta:        {tokens.get('gap_support_cta')} px")
+        lines.append(f"  headline_color:         {tokens.get('headline_color')}")
+        lines.append(f"  support_color:          {tokens.get('support_color')}")
+        lines.append(f"  accent_color:           {tokens.get('accent_color')}")
+        lines.append(f"  cta_bg:                 {tokens.get('cta_bg')}")
+        lines.append(f"  cta_fg:                 {tokens.get('cta_fg')}")
         lines.append("")
     lines.append("── QUALITY TARGETS ──")
     for t in (spec.get("quality_targets") or {}).get("avoid", []):
