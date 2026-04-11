@@ -147,99 +147,7 @@ def _build_font_face_css(fonts: dict[str, str]) -> str:
 # System prompt
 # ---------------------------------------------------------------------------
 
-_SYSTEM_PROMPT = """You are a senior front-end typographer and HTML/CSS implementor.
-
-Your job: Render a text_design_spec into a transparent HTML ad overlay using ONLY the layout tokens provided. Do NOT invent layout values. Do NOT freestyle.
-
-LAYOUT TOKENS — Use these exact px values (provided in the spec):
-
-  zone_rect:               {x, y, w, h}           # zone boundary on 1080×1350 canvas
-  safe_margin:             16 px                  # inset from zone edge
-  usable_width:            1048 px                # w - (2 * margin)
-  headline_size_range:     [150, 200]             # (min_px, max_px) from word count
-  support_size_range:      [36, 48]               # support copy sizing
-  eyebrow_size:            28 px                  # fixed
-  cta_size:                44 px                  # fixed
-  headline_line_height:    1.0                    # tight
-  support_line_height:     1.4                    # spacious
-  gap_headline_support:    12 px                  # vertical gap
-  gap_support_cta:         16 px                  # vertical gap
-  headline_color:          "#FFFFFF"              # exact color
-  support_color:           "#E8E8E8"              # exact color
-  accent_color:            "#FF6B35"              # exact color (from image)
-  cta_bg:                  "#FF6B35"              # CTA button background
-  cta_fg:                  "#FFFFFF"              # CTA button foreground
-
-Use these values in your CSS. Do NOT round, adjust, or guess.
-
-OVERFLOW PREVENTION (CRITICAL):
-If text overflows the zone bounds, you should aim for 90-95% of max_font_size on the first attempt. The system validates post-render and will shrink if needed. Never let text leave zone bounds.
-
-HTML / CSS TECHNICAL RULES:
-- Document is 1080×1350px, transparent background.
-- html, body: width: 1080px; height: 1350px; overflow: hidden; margin: 0; padding: 0; background: transparent.
-- All text blocks: position: absolute.
-- Fonts are injected automatically — do NOT include @font-face.
-- No external URLs, images, scripts, background colors.
-- Rendered by headless Chromium at 1:1 pixel ratio.
-
-ALLOWED CSS:
-- font-family, font-size, font-weight, font-style, letter-spacing, line-height, color, opacity, text-shadow
-- linear-gradient(), radial-gradient(), backdrop-filter: blur()
-- border-radius, border, box-shadow, flexbox, grid, transforms
-- <br> for line breaks, <span> for emphasis
-
-CONTRACT — Honor the spec exactly:
-1. Active elements: Only render elements from active_elements list. Do NOT add forbidden elements.
-2. Placement zone: ALL text must stay inside zone_rect.
-3. Typography: Use ONLY primary_family, accent_family, cta_family. Max 2 total.
-4. Colors: Use headline_color, support_color, accent_color, cta_bg, cta_fg exactly as provided.
-5. Sizing: Use headline_size_range, support_size_range, eyebrow_size, cta_size from layout_tokens.
-6. Container: Apply container_strategy.type (none, shadow_only, translucent_card, etc.).
-7. CTA: If cta_style.type=none, do NOT render a button. Otherwise match the style.
-8. Alignment: Use placement.alignment (left/center/right) — no default centering.
-9. Emphasis spans: Render headline emphasis_spans with their specified colors and font roles.
-10. Line limits: headline ≤ max_lines_headline, support ≤ max_lines_support.
-
-Output ONLY HTML: <!DOCTYPE html> to </html>. No explanation, no markdown. Render the overlay now."""
-
-
-# ---------------------------------------------------------------------------
-# User message builder
-# ---------------------------------------------------------------------------
-
-def _build_user_content(
-    img_b64: str,
-    img_media_type: str,
-    design_directive: str,
-    available_fonts: list[str],
-    image_description: str,
-    performance_hints: str,
-) -> list[dict]:
-    fonts_line = ", ".join(available_fonts) if available_fonts else "Inter"
-    text_msg = f"""The photo above is your visual reference — use it for fine-grained negative space, subject position, and color palette context. Do not embed or reference the photo in the HTML.
-
-AVAILABLE FONT FAMILIES (these are actually loaded into the renderer right now — do not use any other font):
-{fonts_line}
-
-{design_directive}
-
-{"IMAGE DESCRIPTION: " + image_description if image_description else ""}
-{"PERFORMANCE HINTS: " + performance_hints if performance_hints else ""}
-
-Render the complete HTML overlay document now. Output only HTML — start with <!DOCTYPE html> and end with </html>."""
-
-    return [
-        {
-            "type": "image",
-            "source": {
-                "type": "base64",
-                "media_type": img_media_type,
-                "data": img_b64,
-            },
-        },
-        {"type": "text", "text": text_msg},
-    ]
+_SYSTEM_PROMPT = """[DEPRECATED - Architecture moved to intent-based system. See generate_layout_intent.py]"""
 
 
 # ---------------------------------------------------------------------------
@@ -262,6 +170,60 @@ def _rasterize_html(html: str, width: int = 1080, height: int = 1350) -> bytes:
         browser.close()
 
     return png_bytes
+
+
+# ---------------------------------------------------------------------------
+# Fallback intent (if Claude intent validation fails)
+# ---------------------------------------------------------------------------
+
+def _fallback_intent(headline: str, subheadline: str, cta: str, zone: str, template: str) -> dict:
+    """Return a safe default layout intent."""
+    if template == "dark-on-light":
+        color_mode = "dark_on_light_area"
+    else:
+        color_mode = "light_on_dark_area"
+
+    return {
+        "layout_family": "direct_response_stack" if cta else "hero_statement",
+        "text_elements": {
+            "eyebrow": {"present": False},
+            "headline": {"content": headline or "Your Message Here", "lines": []},
+            "support_copy": {"content": subheadline or "", "present": bool(subheadline)},
+            "cta": {"content": cta or "", "present": bool(cta)},
+        },
+        "typography": {
+            "headline_role": "display_impact",
+            "support_role": "modern_sans",
+            "cta_font_role": "modern_sans",
+            "emphasis_spans": [],
+        },
+        "placement": {
+            "primary_zone": zone.replace("-", "_"),
+            "alignment": "center",
+            "vertical_rhythm": "spacious",
+        },
+        "hierarchy": {
+            "headline_scale": "xl",
+            "headline_max_lines": 3,
+            "support_max_lines": 2,
+            "density": "moderate",
+        },
+        "cta_intent": {
+            "present": bool(cta),
+            "style": "pill_filled" if cta else "none",
+            "prominence": "standard",
+        },
+        "container": {
+            "type": "none",
+            "opacity_preference": 0.0,
+            "blur_preference": 0,
+        },
+        "color": {
+            "mode": color_mode,
+            "use_accent": True,
+            "accent_usage": "eyebrow_and_emphasis",
+        },
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -441,39 +403,39 @@ def render_text_overlay(
         font_face_css = _build_font_face_css(fonts)
         available_families = _available_families(fonts)
 
-        # Step 4: Build the compact design directive and user content
-        directive = tds.to_prompt_directive(spec)
+        # Step 4: NEW ARCHITECTURE: Get layout intent from Claude (JSON, not HTML)
+        from lib.generate_layout_intent import generate_layout_intent
+        from lib.generate_html_from_intent import generate_html_from_intent
+
         client = anthropic.Anthropic()
-        user_content = _build_user_content(
-            img_b64=img_b64,
-            img_media_type=img_media_type,
-            design_directive=directive,
-            available_fonts=available_families,
-            image_description=image_description,
-            performance_hints=performance_hints,
+        product_description = headline or subheadline or cta or "Product"
+        intent = generate_layout_intent(
+            image_b64=img_b64,
+            image_media_type=img_media_type,
+            product_description=product_description,
+            tone_mode=spec.get("tone_mode", "performance_ugc"),
+            text_design_spec=spec,
+            image_analysis=analysis,
+            layout_tokens=spec.get("layout_tokens", {}),
         )
+        print(f"[HTML_RENDER] Layout intent: family={intent.get('layout_family')}")
 
-        response = client.messages.create(
-            model="claude-sonnet-4-20250514",
-            max_tokens=5000,
-            system=_SYSTEM_PROMPT,
-            messages=[{"role": "user", "content": user_content}],
+        # Step 4b: Validate intent against family rules
+        is_valid, violations = tds.validate_layout_intent(intent, spec.get("layout_tokens", {}))
+        if not is_valid:
+            print(f"[HTML_RENDER] Intent validation failed: {violations}")
+            print("[HTML_RENDER] Using fallback intent...")
+            intent = _fallback_intent(headline, subheadline, cta, zone, template)
+
+        # Step 4c: Generate HTML deterministically from validated intent
+        text_elements = spec.get("text_elements", {})
+        html_str = generate_html_from_intent(
+            intent=intent,
+            layout_tokens=spec.get("layout_tokens", {}),
+            text_elements=text_elements,
+            image_analysis=analysis,
         )
-
-        html_str = response.content[0].text.strip()
-
-        # Strip accidental markdown fences
-        if "```" in html_str:
-            match = re.search(r"<!DOCTYPE html>[\s\S]*?</html>", html_str, re.IGNORECASE)
-            if match:
-                html_str = match.group(0)
-
-        if not re.match(r"<!DOCTYPE html>", html_str, re.IGNORECASE):
-            match = re.search(r"<!DOCTYPE html>[\s\S]*?</html>", html_str, re.IGNORECASE)
-            if match:
-                html_str = match.group(0)
-            else:
-                raise ValueError("Claude response does not contain valid HTML")
+        print(f"[HTML_RENDER] Generated HTML from intent ({len(html_str)} bytes)")
 
         # Step 5: Inject @font-face CSS into <head> before Playwright renders.
         if font_face_css:
