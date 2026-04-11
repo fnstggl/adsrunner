@@ -155,20 +155,72 @@ def analyze_image(bgr: np.ndarray) -> dict[str, Any]:
         # Suggested text color: if overall image is brighter than 0.55, dark text
         suggested_text_color = "dark" if brightness > 0.55 else "light"
 
+        # Extract vibrant accent color for eyebrows, emphasis, CTA
+        accent_color = _extract_accent_color(small)
+        accent_usage = _suggest_accent_usage(dominant_hue, brightness)
+
         return {
-            "brightness":         round(brightness, 3),
-            "contrast":           round(contrast, 3),
-            "dominant_hue":       dominant_hue,
-            "dominant_palette":   palette,
-            "zone_brightness":    zone_brightness,
-            "zone_busyness":      zone_busyness,
-            "quietest_zones":     quietest_zones,
-            "busiest_zones":      busiest_zones,
+            "brightness":           round(brightness, 3),
+            "contrast":             round(contrast, 3),
+            "dominant_hue":         dominant_hue,
+            "dominant_palette":     palette,
+            "zone_brightness":      zone_brightness,
+            "zone_busyness":        zone_busyness,
+            "quietest_zones":       quietest_zones,
+            "busiest_zones":        busiest_zones,
             "suggested_text_color": suggested_text_color,
+            "accent_color":         accent_color,
+            "accent_usage":         accent_usage,
         }
     except Exception as exc:
         print(f"[IMAGE_ANALYSIS] failed, returning defaults: {exc}")
         return _neutral_defaults()
+
+
+def _extract_accent_color(bgr: np.ndarray) -> str:
+    """Extract a vibrant accent color suitable for eyebrows/emphasis.
+
+    Looks for saturated, high-value pixels. If found, returns a vibrant accent.
+    Otherwise returns a muted neutral.
+    """
+    try:
+        hsv = cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV)
+        h, s, v = cv2.split(hsv)
+
+        # High saturation + moderate-to-high value = good accent candidates
+        mask = (s > 70) & (v > 100)
+
+        if mask.sum() > bgr.size // 50:  # at least 2% of image
+            # Mean of saturated pixels
+            mean_h = float(h[mask].mean())
+            mean_s = float(min(255, s[mask].mean() + 30))  # boost saturation
+            mean_v = float(min(255, v[mask].mean()))
+        else:
+            # Fall back to most-saturated pixels in the image
+            idx = np.argsort(s.flat)[-100:]  # top 100 most saturated pixels
+            mean_h = float(h.flat[idx].mean())
+            mean_s = float(s.flat[idx].mean())
+            mean_v = float(v.flat[idx].mean())
+
+        # Convert back to BGR
+        pixel_hsv = np.uint8([[[int(mean_h), int(mean_s), int(mean_v)]]])
+        pixel_bgr = cv2.cvtColor(pixel_hsv, cv2.COLOR_HSV2BGR)[0][0]
+        b, g, r = int(pixel_bgr[0]), int(pixel_bgr[1]), int(pixel_bgr[2])
+        return f"#{r:02X}{g:02X}{b:02X}"
+    except Exception:
+        return "#888888"  # neutral fallback
+
+
+def _suggest_accent_usage(hue: str, brightness: float) -> str:
+    """Suggest where to use the accent color based on image mood."""
+    # If image is very bright, use accent sparingly (eyebrow only)
+    # If image is dark, can use accent more freely (eyebrow + emphasis)
+    if brightness > 0.7:
+        return "eyebrow"
+    elif brightness > 0.5:
+        return "eyebrow_and_emphasis"
+    else:
+        return "eyebrow_and_cta"
 
 
 def _neutral_defaults() -> dict[str, Any]:
@@ -182,4 +234,6 @@ def _neutral_defaults() -> dict[str, Any]:
         "quietest_zones":       ["bottom_center", "top_center", "bottom_left"],
         "busiest_zones":        ["center", "middle_left", "middle_right"],
         "suggested_text_color": "light",
+        "accent_color":         "#666666",
+        "accent_usage":         "eyebrow",
     }

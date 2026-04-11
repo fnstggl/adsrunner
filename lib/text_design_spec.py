@@ -27,7 +27,11 @@ DEFAULT_SPEC: dict[str, Any] = {
     "text_elements": {
         "eyebrow":      None,
         "badge":        None,
-        "headline":     {"content": "", "emphasis_spans": []},
+        "headline":     {
+            "content": "",
+            "lines": [],  # NEW: semantic line breaks (e.g., ["Actually", "affordable apartments", "Actually in NYC"])
+            "emphasis_spans": [],  # Enhanced: now includes "color" field
+        },
         "support_copy": None,
         "cta":          None,
         "attribution":  None,
@@ -173,6 +177,7 @@ def merge_image_analysis(spec: dict, analysis: dict) -> dict:
     # Optionally nudge color mode based on suggested_text_color if the spec
     # is on its defaults (avoid overwriting explicit creative choices).
     color = spec.get("color_strategy") or {}
+    accent_color = analysis.get("accent_color", "#888888")
     if color.get("mode") in (None, "light_on_dark_area", "dark_on_light_area"):
         if analysis.get("suggested_text_color") == "dark":
             color["mode"] = "dark_on_light_area"
@@ -182,7 +187,27 @@ def merge_image_analysis(spec: dict, analysis: dict) -> dict:
             color["mode"] = "light_on_dark_area"
             color.setdefault("headline_color", "#FFFFFF")
             color.setdefault("support_color", "#EBEBEB")
+
+    # Use the extracted accent color for eyebrows, emphasis, CTA
+    color["accent_color"] = accent_color
     spec["color_strategy"] = color
+
+    # Apply accent color to eyebrow if present
+    elements = spec.get("text_elements") or {}
+    eyebrow = elements.get("eyebrow")
+    if eyebrow:
+        eyebrow.setdefault("emphasis_spans", [])
+        # Eyebrow gets the accent color
+        if not eyebrow.get("_accent_applied"):
+            eyebrow["_accent_applied"] = True
+
+    # Apply accent color to emphasis_spans in headline if present
+    headline = elements.get("headline")
+    if headline and headline.get("emphasis_spans"):
+        for span in headline["emphasis_spans"]:
+            # If span doesn't already have a color, use the accent
+            if not span.get("color"):
+                span["color"] = accent_color
 
     # Nudge primary_zone toward the quietest available zone if current pick
     # isn't in the top-3 quiet zones (image-aware placement).
@@ -251,6 +276,9 @@ def to_prompt_directive(spec: dict) -> str:
     if _content("headline"):
         lines.append(f"  headline:     {_content('headline')!r}")
         hl = elements.get("headline") or {}
+        hl_lines = hl.get("lines") or []
+        if hl_lines:
+            lines.append(f"  lines:        {hl_lines}")
         spans = hl.get("emphasis_spans") or []
         if spans:
             lines.append(f"  emphasis_spans: {spans}")
