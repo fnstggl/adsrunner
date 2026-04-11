@@ -45,8 +45,16 @@ class CompositionEngine(ABC):
         """
         self.intent = intent
         self.tokens = layout_tokens
-        self.text_elements = text_elements
-        self.image_analysis = image_analysis
+        # Ensure text_elements is always a dict, never None
+        self.text_elements = text_elements or {}
+        self.image_analysis = image_analysis or {}
+
+    def _safe_get_text_element(self, key: str) -> dict:
+        """Safely get a text element, returning empty dict if missing or None."""
+        element = self.text_elements.get(key)
+        if element is None or not isinstance(element, dict):
+            return {}
+        return element
 
     @abstractmethod
     def render(self) -> str:

@@ -38,8 +38,20 @@ def generate_html_from_intent(
         return html
     except Exception as exc:
         print(f"[COMPOSITION] Failed to render {family_name}: {exc}")
+        import traceback
+        traceback.print_exc()
         # Fallback to simple direct response stack
         from lib.composition_engines.direct_response_stack import DirectResponseStackEngine
 
-        engine = DirectResponseStackEngine(intent, layout_tokens, text_elements, image_analysis)
-        return engine.render()
+        try:
+            engine = DirectResponseStackEngine(intent, layout_tokens, text_elements, image_analysis)
+            return engine.render()
+        except Exception as fallback_exc:
+            print(f"[COMPOSITION] Fallback also failed: {fallback_exc}")
+            traceback.print_exc()
+            # Last resort: minimal HTML
+            return """<!DOCTYPE html>
+<html>
+<head><meta charset="UTF-8"><style>* {margin:0;padding:0;box-sizing:border-box;} body {width:1080px;height:1350px;background:transparent;}</style></head>
+<body><div style="position:absolute;left:20px;top:20px;color:white;font-size:40px;font-weight:bold;">Composition failed</div></body>
+</html>"""
