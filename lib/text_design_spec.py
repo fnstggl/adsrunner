@@ -15,6 +15,7 @@ from __future__ import annotations
 from typing import Any
 
 from . import ad_design_system as ads
+from . import composition_engines
 
 # ─────────────────────────────────────────────────────────────────────────────
 # DEFAULT SPEC — used when upstream fails
@@ -395,6 +396,97 @@ def to_prompt_directive(spec: dict) -> str:
 # ─────────────────────────────────────────────────────────────────────────────
 # BACKWARD COMPATIBILITY — derive legacy top-level spec fields
 # ─────────────────────────────────────────────────────────────────────────────
+
+def validate_layout_intent(
+    intent: dict[str, Any],
+    layout_tokens: dict[str, Any],
+) -> tuple[bool, list[str]]:
+    """Validate layout intent against family rules and layout tokens.
+
+    Args:
+        intent: Layout intent JSON from Claude
+        layout_tokens: Computed layout constraints
+
+    Returns:
+        (is_valid: bool, violations: list[str])
+    """
+    violations: list[str] = []
+
+    # Get family metadata
+    family_name = intent.get("layout_family", "")
+    try:
+        engine_class = composition_engines.get_engine_class(family_name)
+        engine = engine_class(intent, layout_tokens, {}, {})
+    except ValueError:
+        violations.append(f"Unknown composition family: {family_name}")
+        return (False, violations)
+
+    # Check required elements
+    text_elements = intent.get("text_elements", {})
+    for req in engine.required_elements:
+        obj = text_elements.get(req, {})
+        if not obj or not obj.get("content", "").strip():
+            violations.append(f"Required element missing: {req}")
+
+    # Check forbidden elements
+    for forbidden in engine.forbidden_elements:
+        obj = text_elements.get(forbidden, {})
+        if obj and obj.get("content", "").strip():
+            violations.append(f"Forbidden element present: {forbidden}")
+
+    # Check placement zone
+    zone = intent.get("placement", {}).get("primary_zone", "")
+    if zone not in engine.typical_zones:
+        violations.append(
+            f"Zone '{zone}' not in family's typical zones: {engine.typical_zones}"
+        )
+
+    # Check alignment
+    alignment = intent.get("placement", {}).get("alignment", "")
+    if alignment not in engine.allowed_alignments:
+        violations.append(
+            f"Alignment '{alignment}' not allowed for family; use: {engine.allowed_alignments}"
+        )
+
+    # Check CTA style
+    cta_present = text_elements.get("cta", {}).get("present", False)
+    cta_style = intent.get("cta_intent", {}).get("style", "none")
+    if cta_present and cta_style not in engine.allowed_cta_styles:
+        violations.append(
+            f"CTA style '{cta_style}' not allowed for family; use: {engine.allowed_cta_styles}"
+        )
+
+    # Check typography roles
+    headline_role = intent.get("typography", {}).get("headline_role", "")
+    support_role = intent.get("typography", {}).get("support_role", "")
+    cta_role = intent.get("typography", {}).get("cta_font_role", "")
+
+    valid_roles = [
+        "display_impact",
+        "editorial_serif",
+        "modern_sans",
+        "warm_serif",
+        "handwritten_accent",
+    ]
+    if headline_role not in valid_roles:
+        violations.append(f"Invalid headline typography role: {headline_role}")
+    if support_role and support_role not in valid_roles:
+        violations.append(f"Invalid support typography role: {support_role}")
+    if cta_role and cta_role not in valid_roles:
+        violations.append(f"Invalid CTA typography role: {cta_role}")
+
+    # Check color mode
+    color_mode = intent.get("color", {}).get("mode", "")
+    if color_mode not in ("light_on_dark_area", "dark_on_light_area"):
+        violations.append(f"Invalid color mode: {color_mode}")
+
+    # Check headline scale
+    headline_scale = intent.get("hierarchy", {}).get("headline_scale", "")
+    if headline_scale not in ("md", "lg", "xl", "xxl"):
+        violations.append(f"Invalid headline scale: {headline_scale}")
+
+    return (len(violations) == 0, violations)
+
 
 def derive_legacy_fields(text_design_spec: dict) -> dict[str, Any]:
     """Derive legacy headline/subheadline/cta/negativeSpaceZone/textTemplate
