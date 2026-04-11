@@ -318,6 +318,8 @@ def api_generate():
                         zone=spec.get("negativeSpaceZone", "bottom-center"),
                         template=spec.get("textTemplate", "light-on-dark"),
                         logo=logo_arr,
+                        text_design_spec=spec.get("text_design_spec"),
+                        spec_id=spec.get("id", f"ad_{i + 1}"),
                     )
                 except Exception as exc:
                     print(f"[WARN] Text overlay failed for ad {i + 1}: {exc}")

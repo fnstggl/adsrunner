@@ -8,3 +8,4 @@ dist/
 build/
 .venv/
 venv/
+outputs/html_debug/
