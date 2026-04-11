@@ -427,7 +427,22 @@ def render_text_overlay(
             intent = _fallback_intent(headline, subheadline, cta, zone, template)
 
         # Step 4c: Generate HTML deterministically from validated intent
-        text_elements = spec.get("text_elements", {})
+        # Extract text_elements from intent if available, otherwise from spec
+        text_elements = intent.get("text_elements", spec.get("text_elements", {}))
+
+        # Normalize text_elements to ensure all keys exist with proper defaults
+        if not text_elements:
+            text_elements = {}
+        text_elements.setdefault("eyebrow", {})
+        text_elements.setdefault("headline", {"content": "", "lines": []})
+        text_elements.setdefault("support_copy", {"content": ""})
+        text_elements.setdefault("cta", {"content": ""})
+
+        # Ensure each element is a dict, not None
+        for key in ["eyebrow", "headline", "support_copy", "cta"]:
+            if text_elements.get(key) is None:
+                text_elements[key] = {}
+
         html_str = generate_html_from_intent(
             intent=intent,
             layout_tokens=spec.get("layout_tokens", {}),
