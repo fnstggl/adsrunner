@@ -23,16 +23,26 @@ def encode_image(image_path: str) -> tuple[str, str]:
 
     b64 = base64.b64encode(image_data).decode()
 
-    # Detect media type from extension
-    ext = Path(image_path).suffix.lower()
-    media_type_map = {
-        ".jpg": "image/jpeg",
-        ".jpeg": "image/jpeg",
-        ".png": "image/png",
-        ".gif": "image/gif",
-        ".webp": "image/webp",
-    }
-    media_type = media_type_map.get(ext, "image/jpeg")
+    # Detect media type from file magic bytes
+    if image_data.startswith(b'\x89PNG'):
+        media_type = "image/png"
+    elif image_data.startswith(b'\xff\xd8\xff'):
+        media_type = "image/jpeg"
+    elif image_data.startswith(b'GIF8'):
+        media_type = "image/gif"
+    elif image_data.startswith(b'RIFF') and b'WEBP' in image_data[:12]:
+        media_type = "image/webp"
+    else:
+        # Fallback to extension
+        ext = Path(image_path).suffix.lower()
+        media_type_map = {
+            ".jpg": "image/jpeg",
+            ".jpeg": "image/jpeg",
+            ".png": "image/png",
+            ".gif": "image/gif",
+            ".webp": "image/webp",
+        }
+        media_type = media_type_map.get(ext, "image/jpeg")
 
     return b64, media_type
 
@@ -70,21 +80,27 @@ def run_e2e_test(image_path: str):
 
     print(f"\n[Step 3] Building creative specs...")
     try:
-        specs = build_creative_specs(classification, product_description)
+        specs_list = build_creative_specs(product_description, classification)
+        if not specs_list or len(specs_list) == 0:
+            print("✗ No specs generated")
+            return False
+
+        specs = specs_list[0]  # Take first spec
         print(f"✓ Specs built")
         print(f"  - Tone: {specs.get('tone_mode')}")
-        print(f"  - Family: {specs.get('primary_family')}")
+        print(f"  - Family: {specs.get('layout_family')}")
     except Exception as e:
         print(f"✗ Specs building failed: {e}")
         return False
 
     print(f"\n[Step 4] Generating layout intent with Claude...")
     try:
+        tone_mode = specs.get("tone_mode", specs.get("tone", "performance_ugc"))
         intent = generate_layout_intent(
             image_b64=image_b64,
             image_media_type=media_type,
             product_description=product_description,
-            tone_mode=specs.get("tone_mode", "performance_ugc"),
+            tone_mode=tone_mode,
             text_design_spec=specs,
             image_analysis={"brightness": "medium", "colors": ["warm", "neutral"]},
             layout_tokens={
@@ -127,7 +143,35 @@ def run_e2e_test(image_path: str):
 
     print(f"\n[Step 5] Generating HTML from intent with responsive sizing...")
     try:
-        html = generate_html_from_intent(intent, {"description": product_description})
+        # Extract text elements from intent
+        text_elements = intent.get("text_elements", {})
+
+        # Define layout tokens for rendering
+        layout_tokens = {
+            "headline_size_range": (100, 150),
+            "support_size_range": (32, 48),
+            "headline_line_height": 1.0,
+            "support_line_height": 1.4,
+            "gap_headline_support": 12,
+            "gap_support_cta": 16,
+            "usable_width": 900,
+            "zone_rect": {"x": 50, "y": 100, "w": 980, "h": 800},
+            "safe_margin": 16,
+            "headline_color": "#FFFFFF",
+            "support_color": "#F0F0F0",
+            "accent_color": "#999999",
+            "cta_bg": "#FF6B35",
+            "cta_fg": "#FFFFFF",
+            "eyebrow_size": 24,
+        }
+
+        image_analysis = {
+            "brightness": "medium",
+            "colors": ["warm", "neutral"],
+            "zones": {"top": "lamp", "center": "person", "bottom": "desk"}
+        }
+
+        html = generate_html_from_intent(intent, layout_tokens, text_elements, image_analysis)
 
         if not html or "<!DOCTYPE html>" not in html:
             print("✗ HTML generation failed or invalid")
