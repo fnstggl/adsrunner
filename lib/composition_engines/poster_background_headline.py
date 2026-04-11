@@ -45,8 +45,11 @@ class PosterBackgroundHeadlineEngine(CompositionEngine):
         else:
             line_html = headline_content
 
-        # Largest possible with dramatic effect
-        background_font_size = int(hl_max * 1.3)
+        # Calculate responsive font size based on headline length, then apply dramatic scaling
+        responsive_hl_size = self._calculate_responsive_font_size(
+            headline_content, hl_min, hl_max, lines
+        )
+        background_font_size = int(responsive_hl_size * 1.3)
         headline_html = f"""<div style="
             position: absolute;
             top: 50%;

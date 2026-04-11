@@ -296,6 +296,41 @@ class CompositionEngine(ABC):
         # Return unique fonts only (max 2-3)
         return list(set([headline_font, support_font, cta_font]))
 
+    def _calculate_responsive_font_size(
+        self, headline_text: str, hl_min: int, hl_max: int, lines: list | None = None
+    ) -> int:
+        """Calculate responsive headline font size based on content length.
+
+        Professional typography: longer headlines need smaller fonts.
+
+        Args:
+            headline_text: The headline content
+            hl_min: Minimum font size (e.g., 80px) - NOT a hard floor for responsive sizing
+            hl_max: Maximum font size (e.g., 150px)
+            lines: Optional pre-broken lines
+
+        Returns:
+            Responsive font size in pixels
+        """
+        char_count = len(headline_text.replace("\n", " ").strip())
+
+        # Scaling based on character count
+        if char_count <= 10:
+            scale = 1.0
+        elif char_count <= 20:
+            scale = 0.90
+        elif char_count <= 35:
+            scale = 0.75
+        elif char_count <= 50:
+            scale = 0.60
+        else:
+            scale = 0.45
+
+        calculated_size = int(hl_max * scale)
+        # Cap to max, but don't enforce min when scaling responsively
+        # This allows longer headlines to scale below hl_min for better layout
+        return min(hl_max, calculated_size)
+
     def _calculate_max_text_width(self, font_size: int, optimal_chars: int = 65) -> int:
         """Calculate optimal max-width for readable text measure.
 

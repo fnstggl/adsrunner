@@ -50,9 +50,15 @@ class MinimalProductLedEngine(CompositionEngine):
         else:
             line_html = headline_content
 
+        # Calculate responsive font size based on headline length, then apply family scaling
+        responsive_hl_size = self._calculate_responsive_font_size(
+            headline_content, hl_min, hl_max, lines
+        )
+        responsive_hl_size = int(responsive_hl_size * 0.8)
+
         headline_html = f"""<div style="
             font-family: {hl_font};
-            font-size: {int(hl_max * 0.8)}px;
+            font-size: {responsive_hl_size}px;
             font-weight: 700;
             line-height: {hl_line_height};
             color: {hl_color};
